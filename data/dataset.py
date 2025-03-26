@@ -88,8 +88,8 @@ class SafetyGearDataset(Dataset):
             image = transformed['image']
             boxes = np.array(transformed['bboxes'], dtype=np.float32) if len(transformed['bboxes']) > 0 else np.zeros((0, 4), dtype=np.float32)
             labels = np.array(transformed['labels'], dtype=np.int64) if len(transformed['labels']) > 0 else np.zeros((0,), dtype=np.int64)
-            print(f"Type of transformed['bboxes']: {type(transformed['bboxes'])}")
-            print(f"Value of transformed['bboxes']: {transformed['bboxes']}")
+            #print(f"Type of transformed['bboxes']: {type(transformed['bboxes'])}")
+            #print(f"Value of transformed['bboxes']: {transformed['bboxes']}")
 
         # Create target dictionary for torchvision detection models
         target = {
