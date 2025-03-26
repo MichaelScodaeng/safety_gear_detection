@@ -83,8 +83,8 @@ class SafetyGearDataset(Dataset):
         if self.transform:
             transformed = self.transform(image=image, bboxes=boxes, labels=labels)
             image = transformed['image']
-            boxes = np.array(transformed['bboxes'], dtype=np.float32) if transformed['bboxes'] else np.zeros((0, 4), dtype=np.float32)
-            labels = np.array(transformed['labels'], dtype=np.int64) if transformed['labels'] else np.zeros((0,), dtype=np.int64)
+            boxes = np.array(transformed['bboxes'], dtype=np.float32) if len(transformed['bboxes']) > 0 else np.zeros((0, 4), dtype=np.float32)
+            labels = np.array(transformed['labels'], dtype=np.int64) if len(transformed['labels']) > 0 else np.zeros((0,), dtype=np.int64)
 
         # Create target dictionary for torchvision detection models
         target = {
