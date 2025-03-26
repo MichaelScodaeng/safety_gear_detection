@@ -38,7 +38,6 @@ class SafetyGearDataset(Dataset):
         return len(self.img_files)
 
     def __getitem__(self, idx):
-        # Load image
         img_path = self.img_files[idx]
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -55,78 +54,42 @@ class SafetyGearDataset(Dataset):
         labels = []
 
         if os.path.exists(label_path):
-            print(f"Label file found")
             # YOLO format: class_id, x_center, y_center, width, height (normalized)
             with open(label_path, 'r') as f:
                 for line in f.readlines():
                     data = line.strip().split()
                     if len(data) == 5:
                         class_id, x_center, y_center, width, height = map(float, data)
-                        print(f"YOLO format: class={class_id}, x={x_center}, y={y_center}, w={width}, h={height}")
 
-                        # Convert normalized YOLO format to pixel coordinates
+                        # Convert normalized YOLO format to pixel coordinates [x1, y1, x2, y2]
                         img_h, img_w = image.shape[:2]
-                        x1 = (x_center - width / 2) * img_w
-                        y1 = (y_center - height / 2) * img_h
-                        x2 = (x_center + width / 2) * img_w
-                        y2 = (y_center + height / 2) * img_h
-
-                        print(f"Converted to [x1,y1,x2,y2]: [{x1}, {y1}, {x2}, {y2}]")
+                        x1 = (x_center - width/2) * img_w
+                        y1 = (y_center - height/2) * img_h
+                        x2 = (x_center + width/2) * img_w
+                        y2 = (y_center + height/2) * img_h
 
                         # Ensure coordinates are within image boundaries
                         x1, y1, x2, y2 = max(0, x1), max(0, y1), min(img_w, x2), min(img_h, y2)
 
                         # Skip invalid boxes
                         if x2 <= x1 or y2 <= y1:
-                            print(f"Skipping invalid box: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
                             continue
 
                         boxes.append([x1, y1, x2, y2])
                         labels.append(int(class_id))
-        else:
-            print(f"No label file found")
 
         # Convert to numpy arrays
         boxes = np.array(boxes, dtype=np.float32)
         labels = np.array(labels, dtype=np.int64)
 
-        print(f"Original boxes shape: {boxes.shape}")
-        print(f"Original labels shape: {labels.shape}")
-
         # Apply transformations
         if self.transform:
-            print(f"Applying transformations")
-            try:
-                transformed = self.transform(image=image,
-                                             bboxes=boxes.tolist() if len(boxes) > 0 else [],
-                                             labels=labels.tolist() if len(labels) > 0 else [])
-                print(f"Transformation result: bboxes={transformed['bboxes']}, labels={transformed['labels']}")
-
-                image = transformed['image']
-
-                # Handle empty bboxes and labels properly
-                if 'bboxes' in transformed and len(transformed['bboxes']) > 0:
-                    boxes = np.array(transformed['bboxes'], dtype=np.float32)
-                    print(f"Transformed boxes shape: {boxes.shape}")
-                else:
-                    boxes = np.zeros((0, 4), dtype=np.float32)
-                    print(f"No boxes after transformation")
-
-                if 'labels' in transformed and len(transformed['labels']) > 0:
-                    labels = np.array(transformed['labels'], dtype=np.int64)
-                    print(f"Transformed labels shape: {labels.shape}")
-                else:
-                    labels = np.zeros((0,), dtype=np.int64)
-                    print(f"No labels after transformation")
-            except Exception as e:
-                print(f"Error during transformation: {e}")
-                raise e
-
-        # Create target dictionary
-        print(f"Final boxes shape: {boxes.shape}")
-        print(f"Final labels shape: {labels.shape}")
-
-        # Rest of your code...
+            transformed = self.transform(image=image, bboxes=boxes, labels=labels)
+            image = transformed['image']
+            boxes = np.array(transformed['bboxes'], dtype=np.float32) if len(transformed['bboxes']) > 0 else np.zeros((0, 4), dtype=np.float32)
+            labels = np.array(transformed['labels'], dtype=np.int64) if len(transformed['labels']) > 0 else np.zeros((0,), dtype=np.int64)
+            print(f"Type of transformed['bboxes']: {type(transformed['bboxes'])}")
+            print(f"Value of transformed['bboxes']: {transformed['bboxes']}")
 
         # Create target dictionary for torchvision detection models
         target = {
