@@ -15,6 +15,20 @@ from PIL import Image
 
 from .base import RCNNBase
 
+import os
+import time
+import numpy as np
+import torch
+import torchvision
+from torchvision.models.detection import FasterRCNN
+from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from torchvision.ops import MultiScaleRoIAlign
+from PIL import Image
+
+from .base import RCNNBase
+
+
 class FasterRCNN_Model(RCNNBase):
     """
     Implementation of Faster R-CNN
@@ -309,7 +323,7 @@ class FasterRCNN_Model(RCNNBase):
             labels: Class labels
             scores: Confidence scores
             figsize: Figure size
-            
+
         Returns:
             Image with bounding boxes drawn
         """
