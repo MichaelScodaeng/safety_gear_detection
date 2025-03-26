@@ -112,15 +112,15 @@ class FasterRCNN_Model(RCNNBase):
                 if "rpn" not in name:
                     param.requires_grad = False
 
-    def train(self, train_loader, valid_loader=None, epochs=10, lr=0.001, weight_decay=0.0005, batch_size=4):
+    def train(self, train_loader, valid_loader=None, epochs=10, lr=0.0001, weight_decay=0.0005, batch_size=2):
         """
-        Train the Faster R-CNN model
+        Train the Faster R-CNN model with robust error handling
 
         Args:
             train_loader (DataLoader): DataLoader for training
             valid_loader (DataLoader, optional): DataLoader for validation
             epochs (int): Number of epochs to train
-            lr (float): Learning rate
+            lr (float): Learning rate (reduced from 0.001)
             weight_decay (float): Weight decay for optimizer
             batch_size (int): Batch size for training
 
@@ -137,10 +137,16 @@ class FasterRCNN_Model(RCNNBase):
         # Set model to training mode
         self.model.train()
 
-        # Create optimizer
+        # Create optimizer - try Adam instead of SGD for better stability
         params = [p for p in self.model.parameters() if p.requires_grad]
-        optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=weight_decay)
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+        optimizer = torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
+        # Alternative: Use SGD with lower learning rate
+        # optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=weight_decay)
+
+        # Use ReduceLROnPlateau scheduler instead of StepLR for adaptive learning rate
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=3, verbose=True
+        )
 
         # Training history
         history = {
@@ -149,10 +155,12 @@ class FasterRCNN_Model(RCNNBase):
             'train_loss_box_reg': [],
             'train_loss_objectness': [],
             'train_loss_rpn_box_reg': [],
-            'val_map': [] if valid_loader else None
+            'val_map': [] if valid_loader else None,
+            'best_map': 0
         }
 
         # Training loop
+        nan_count = 0  # Count NaN occurrences to detect persistent issues
         for epoch in range(epochs):
             # Set model to training mode
             self.model.train()
@@ -163,52 +171,106 @@ class FasterRCNN_Model(RCNNBase):
             epoch_loss_box_reg = 0
             epoch_loss_objectness = 0
             epoch_loss_rpn_box_reg = 0
+            valid_batches = 0  # Count valid batches
 
             # Start time
             start_time = time.time()
 
-            # Iterate through training data
+            # Iterate through training data with error handling
             for i, (images, targets) in enumerate(train_loader):
-                # Move data to device
-                images = [img.to(self.device) for img in images]
-                targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+                try:
+                    # Skip empty batches
+                    if any(len(t['boxes']) == 0 for t in targets):
+                        print(f"Skipping batch {i + 1} with empty targets")
+                        continue
 
-                # Forward pass
-                loss_dict = self.model(images, targets)
+                    # Move data to device
+                    images = [img.to(self.device) for img in images]
+                    targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
 
-                # Calculate total loss
-                losses = sum(loss for loss in loss_dict.values())
+                    # Verify boxes have proper dimensions
+                    skip_batch = False
+                    for t in targets:
+                        # Check for invalid boxes
+                        if t['boxes'].size(0) > 0:
+                            widths = t['boxes'][:, 2] - t['boxes'][:, 0]
+                            heights = t['boxes'][:, 3] - t['boxes'][:, 1]
+                            if torch.any(widths <= 0) or torch.any(heights <= 0):
+                                print(f"Found invalid box dimensions in batch {i + 1}, skipping")
+                                skip_batch = True
+                                break
 
-                # Backward pass
-                optimizer.zero_grad()
-                losses.backward()
-                optimizer.step()
+                    if skip_batch:
+                        continue
 
-                # Update epoch loss
-                epoch_loss += losses.item()
-                epoch_loss_classifier += loss_dict['loss_classifier'].item()
-                epoch_loss_box_reg += loss_dict['loss_box_reg'].item()
-                epoch_loss_objectness += loss_dict['loss_objectness'].item()
-                epoch_loss_rpn_box_reg += loss_dict['loss_rpn_box_reg'].item()
+                    # Forward pass
+                    loss_dict = self.model(images, targets)
 
-                # Print progress
-                if (i + 1) % 10 == 0:
-                    print(f"Epoch {epoch + 1}/{epochs}, Batch {i + 1}/{len(train_loader)}, "
-                          f"Loss: {losses.item():.4f}, "
-                          f"Class Loss: {loss_dict['loss_classifier'].item():.4f}, "
-                          f"Box Reg Loss: {loss_dict['loss_box_reg'].item():.4f}, "
-                          f"Objectness Loss: {loss_dict['loss_objectness'].item():.4f}, "
-                          f"RPN Box Reg Loss: {loss_dict['loss_rpn_box_reg'].item():.4f}")
+                    # Check for NaN values in loss
+                    if any(torch.isnan(loss).item() for loss in loss_dict.values()):
+                        nan_count += 1
+                        print(f"NaN detected in batch {i + 1}. Skipping... (Total NaN incidents: {nan_count})")
 
-            # Update learning rate
-            lr_scheduler.step()
+                        # If too many NaNs, reduce learning rate
+                        if nan_count % 5 == 0:
+                            for param_group in optimizer.param_groups:
+                                param_group['lr'] *= 0.5
+                                print(f"Reducing learning rate to {param_group['lr']}")
+
+                        continue
+
+                    # Calculate total loss
+                    losses = sum(loss for loss in loss_dict.values())
+
+                    # Skip abnormally high losses that might lead to NaN
+                    if losses.item() > 50:
+                        print(f"Extremely high loss ({losses.item():.2f}) in batch {i + 1}. Skipping...")
+                        continue
+
+                    # Backward pass
+                    optimizer.zero_grad()
+                    losses.backward()
+
+                    # Add gradient clipping to prevent explosion
+                    torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
+
+                    optimizer.step()
+
+                    # Update epoch loss
+                    epoch_loss += losses.item()
+                    epoch_loss_classifier += loss_dict['loss_classifier'].item()
+                    epoch_loss_box_reg += loss_dict['loss_box_reg'].item()
+                    epoch_loss_objectness += loss_dict['loss_objectness'].item()
+                    epoch_loss_rpn_box_reg += loss_dict['loss_rpn_box_reg'].item()
+                    valid_batches += 1
+
+                    # Print progress
+                    if (i + 1) % 10 == 0:
+                        print(f"Epoch {epoch + 1}/{epochs}, Batch {i + 1}/{len(train_loader)}, "
+                              f"Loss: {losses.item():.4f}, "
+                              f"Class Loss: {loss_dict['loss_classifier'].item():.4f}, "
+                              f"Box Reg Loss: {loss_dict['loss_box_reg'].item():.4f}, "
+                              f"Objectness Loss: {loss_dict['loss_objectness'].item():.4f}, "
+                              f"RPN Box Reg Loss: {loss_dict['loss_rpn_box_reg'].item():.4f}")
+
+                except Exception as e:
+                    print(f"Error in batch {i + 1}: {str(e)}")
+                    continue
+
+            # Check if training made progress
+            if valid_batches == 0:
+                print("No valid batches in this epoch. Check your data or reduce learning rate further.")
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] *= 0.1
+                    print(f"Reducing learning rate to {param_group['lr']}")
+                continue
 
             # Calculate average loss
-            epoch_loss /= len(train_loader)
-            epoch_loss_classifier /= len(train_loader)
-            epoch_loss_box_reg /= len(train_loader)
-            epoch_loss_objectness /= len(train_loader)
-            epoch_loss_rpn_box_reg /= len(train_loader)
+            epoch_loss /= valid_batches
+            epoch_loss_classifier /= valid_batches
+            epoch_loss_box_reg /= valid_batches
+            epoch_loss_objectness /= valid_batches
+            epoch_loss_rpn_box_reg /= valid_batches
 
             # Update history
             history['train_loss'].append(epoch_loss)
@@ -217,13 +279,17 @@ class FasterRCNN_Model(RCNNBase):
             history['train_loss_objectness'].append(epoch_loss_objectness)
             history['train_loss_rpn_box_reg'].append(epoch_loss_rpn_box_reg)
 
+            # Update learning rate based on training loss
+            lr_scheduler.step(epoch_loss)
+
             # Validation
             if valid_loader:
                 # Set model to evaluation mode
                 self.model.eval()
 
                 # Calculate mAP on validation set
-                mAP = self.evaluate(valid_loader)['mAP']
+                val_metrics = self.evaluate(valid_loader)
+                mAP = val_metrics['mAP']
                 history['val_map'].append(mAP)
 
                 # Print results
@@ -233,13 +299,16 @@ class FasterRCNN_Model(RCNNBase):
                       f"Time: {time.time() - start_time:.2f}s")
 
                 # Save best model
-                if mAP > history.get('best_map', 0):
+                if mAP > history['best_map']:
                     history['best_map'] = mAP
                     self.save_model(os.path.join(self.config.get('output_path', '.'), 'best_model.pt'))
             else:
                 print(f"Epoch {epoch + 1}/{epochs}, "
                       f"Train Loss: {epoch_loss:.4f}, "
                       f"Time: {time.time() - start_time:.2f}s")
+
+                # Save checkpoint every epoch
+                self.save_model(os.path.join(self.config.get('output_path', '.'), f'checkpoint_epoch_{epoch + 1}.pt'))
 
         return history
 
