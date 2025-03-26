@@ -42,13 +42,13 @@ class SafetyGearDataset(Dataset):
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        print(f"Loading image: {img_path}")
-        print(f"Image shape: {image.shape}")
+        #print(f"Loading image: {img_path}")
+        #print(f"Image shape: {image.shape}")
 
         # Get label file path
         img_name = os.path.basename(img_path).rsplit('.', 1)[0]
         label_path = os.path.join(self.label_dir, f"{img_name}.txt")
-        print(f"Looking for label file: {label_path}")
+        #print(f"Looking for label file: {label_path}")
 
         boxes = []
         labels = []
