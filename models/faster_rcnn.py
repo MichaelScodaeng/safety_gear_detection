@@ -142,7 +142,7 @@ class FasterRCNN_Model(RCNNBase):
                 num_workers=4
             )
 
-        # Set model to training mode
+            # Set model to training mode
         self.model.train()
 
         # Create optimizer
@@ -157,7 +157,7 @@ class FasterRCNN_Model(RCNNBase):
             'train_loss_box_reg': [],
             'train_loss_objectness': [],
             'train_loss_rpn_box_reg': [],
-            'val_map': [] if valid_dataset else None
+            'val_map': [] if valid_loader else None
         }
 
         # Training loop
