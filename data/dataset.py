@@ -38,14 +38,17 @@ class SafetyGearDataset(Dataset):
         return len(self.img_files)
 
     def __getitem__(self, idx):
-        # Load image
         img_path = self.img_files[idx]
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Get label file path (assuming same name with .txt extension)
+        print(f"Loading image: {img_path}")
+        print(f"Image shape: {image.shape}")
+
+        # Get label file path
         img_name = os.path.basename(img_path).rsplit('.', 1)[0]
         label_path = os.path.join(self.label_dir, f"{img_name}.txt")
+        print(f"Looking for label file: {label_path}")
 
         boxes = []
         labels = []
