@@ -120,29 +120,7 @@ class FasterRCNN_Model(RCNNBase):
         # Move model to device
         self.model.to(self.device)
 
-        # No need to create data loaders since they are already provided
-        # Rest of the method can remain the same
-        # ...
-
-        # Create data loaders
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            collate_fn=self._collate_fn,
-            num_workers=4
-        )
-
-        if valid_dataset:
-            valid_loader = torch.utils.data.DataLoader(
-                valid_dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                collate_fn=self._collate_fn,
-                num_workers=4
-            )
-
-            # Set model to training mode
+        # Set model to training mode
         self.model.train()
 
         # Create optimizer
@@ -201,7 +179,7 @@ class FasterRCNN_Model(RCNNBase):
 
                 # Print progress
                 if (i + 1) % 10 == 0:
-                    print(f"Epoch {epoch+1}/{epochs}, Batch {i+1}/{len(train_loader)}, "
+                    print(f"Epoch {epoch + 1}/{epochs}, Batch {i + 1}/{len(train_loader)}, "
                           f"Loss: {losses.item():.4f}, "
                           f"Class Loss: {loss_dict['loss_classifier'].item():.4f}, "
                           f"Box Reg Loss: {loss_dict['loss_box_reg'].item():.4f}, "
@@ -226,7 +204,7 @@ class FasterRCNN_Model(RCNNBase):
             history['train_loss_rpn_box_reg'].append(epoch_loss_rpn_box_reg)
 
             # Validation
-            if valid_dataset:
+            if valid_loader:
                 # Set model to evaluation mode
                 self.model.eval()
 
@@ -235,7 +213,7 @@ class FasterRCNN_Model(RCNNBase):
                 history['val_map'].append(mAP)
 
                 # Print results
-                print(f"Epoch {epoch+1}/{epochs}, "
+                print(f"Epoch {epoch + 1}/{epochs}, "
                       f"Train Loss: {epoch_loss:.4f}, "
                       f"Val mAP: {mAP:.4f}, "
                       f"Time: {time.time() - start_time:.2f}s")
@@ -245,7 +223,7 @@ class FasterRCNN_Model(RCNNBase):
                     history['best_map'] = mAP
                     self.save_model(os.path.join(self.config.get('output_path', '.'), 'best_model.pt'))
             else:
-                print(f"Epoch {epoch+1}/{epochs}, "
+                print(f"Epoch {epoch + 1}/{epochs}, "
                       f"Train Loss: {epoch_loss:.4f}, "
                       f"Time: {time.time() - start_time:.2f}s")
 
