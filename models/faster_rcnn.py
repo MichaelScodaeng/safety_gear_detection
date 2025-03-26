@@ -98,13 +98,13 @@ class FasterRCNN_Model(RCNNBase):
                 if "rpn" not in name:
                     param.requires_grad = False
 
-    def train(self, train_dataset, valid_dataset=None, epochs=10, lr=0.001, weight_decay=0.0005, batch_size=4):
+    def train(self, train_loader, valid_loader=None, epochs=10, lr=0.001, weight_decay=0.0005, batch_size=4):
         """
         Train the Faster R-CNN model
 
         Args:
-            train_dataset (Dataset): Dataset for training
-            valid_dataset (Dataset, optional): Dataset for validation
+            train_loader (DataLoader): DataLoader for training
+            valid_loader (DataLoader, optional): DataLoader for validation
             epochs (int): Number of epochs to train
             lr (float): Learning rate
             weight_decay (float): Weight decay for optimizer
@@ -119,6 +119,10 @@ class FasterRCNN_Model(RCNNBase):
 
         # Move model to device
         self.model.to(self.device)
+
+        # No need to create data loaders since they are already provided
+        # Rest of the method can remain the same
+        # ...
 
         # Create data loaders
         train_loader = torch.utils.data.DataLoader(
