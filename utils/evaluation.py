@@ -8,6 +8,12 @@ from torchvision.ops import box_iou
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+import os
+import torch
+import numpy as np
+import json
+import tempfile
+import traceback
 
 
 def calculate_iou(box1, box2):
@@ -439,4 +445,268 @@ def analyze_detections(predictions, targets, class_names, confidence_threshold=0
     stats['overall_f1'] = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
     
     return stats
+
+"""
+Evaluation utilities for the Safety Gear Detection System.
+"""
+
+
+
+def validate(detector, data_loader):
+    """
+    Run validation using inference mode and calculate COCO mAP metrics
+    
+    Args:
+        detector: SafetyGearDetector instance
+        data_loader: DataLoader for validation data
+        
+    Returns:
+        tuple: (val_loss, val_map)
+    """
+    detector.model.model.eval()
+    
+    # First, run inference on a single batch for visualization
+    for images, targets in data_loader:
+        try:
+            # Move to device
+            images = list(img.to(detector.device) for img in images)
+            targets = [{k: v.to(detector.device) for k, v in t.items()} for t in targets]
+            
+            # Run inference
+            with torch.no_grad():
+                outputs = detector.model.model(images)
                 
+            # Visualize some examples
+            print("\nVisualizing validation examples:")
+            detector.visualize_debug_images(images, targets, outputs, max_images=2)
+            
+            # Print shapes for debugging
+            for i, (img, output, target) in enumerate(zip(images[:2], outputs[:2], targets[:2])):
+                print(f"Image {i} shape: {img.shape}")
+                for k, v in output.items():
+                    if hasattr(v, 'shape'):
+                        print(f"  Output {k} shape: {v.shape}")
+                for k, v in target.items():
+                    if hasattr(v, 'shape'):
+                        print(f"  Target {k} shape: {v.shape}")
+            
+            # Just process one batch for visualization
+            break
+            
+        except Exception as e:
+            print(f"Error during inference: {e}")
+            traceback.print_exc()
+            return float('inf'), 0.0
+    
+    # Calculate COCO-style mAP
+    try:
+        map_all, map_50, map_75 = detector.calculate_coco_map(data_loader)
+        
+        # Return mAP@0.5 (commonly used) as validation metric
+        # Use negative mAP as loss (since lower is better for optimizers)
+        val_loss = -map_50
+        val_map = map_all  # mAP@[0.5:0.95] is more comprehensive
+        
+        return val_loss, val_map
+        
+    except Exception as e:
+        print(f"Error during mAP calculation: {e}")
+        traceback.print_exc()
+        return float('inf'), 0.0
+
+
+def calculate_coco_map(detector, data_loader):
+    """
+    Calculate COCO-style mAP for the model using multiple IoU thresholds (0.5:0.05:0.95)
+    
+    Args:
+        detector: SafetyGearDetector instance
+        data_loader: DataLoader for validation data
+        
+    Returns:
+        tuple: (mAP@[0.5:0.05:0.95], mAP@0.5, mAP@0.75)
+    """
+    try:
+        from pycocotools.cocoeval import COCOeval
+        from pycocotools.coco import COCO
+    except ImportError:
+        print("Error: pycocotools is required for COCO mAP calculation.")
+        print("Please install it using: pip install pycocotools")
+        return 0.0, 0.0, 0.0
+    
+    print("\nCalculating COCO-style mAP (0.5:0.05:0.95)...")
+    detector.model.model.eval()
+    
+    # Track all detections and ground truths
+    all_predictions = []
+    all_ground_truths = []
+    image_id = 0
+    annotation_id = 0
+    
+    with torch.no_grad():
+        for batch_idx, (images, targets) in enumerate(data_loader):
+            if batch_idx % 10 == 0:
+                print(f"Processing batch {batch_idx}/{len(data_loader)}")
+                
+            # Process images and run inference
+            processed_images = [img.to(detector.device) for img in images]
+            outputs = detector.model.model(processed_images)
+            
+            # Store predictions and ground truths
+            for img_idx, (output, target) in enumerate(zip(outputs, targets)):
+                current_image_id = image_id
+                image_id += 1
+                
+                # Skip images with no ground truth boxes
+                if 'boxes' not in target or len(target['boxes']) == 0:
+                    continue
+                
+                # Get image dimensions for area calculation
+                img_height, img_width = processed_images[img_idx].shape[1:3]
+                
+                # Process predictions
+                if 'boxes' in output and len(output['boxes']) > 0:
+                    boxes = output['boxes'].cpu().numpy()
+                    scores = output['scores'].cpu().numpy()
+                    labels = output['labels'].cpu().numpy()
+                    
+                    # Convert boxes to COCO format [x, y, width, height]
+                    coco_boxes = []
+                    for box in boxes:
+                        x1, y1, x2, y2 = box
+                        width = x2 - x1
+                        height = y2 - y1
+                        coco_boxes.append([float(x1), float(y1), float(width), float(height)])
+                    
+                    # Store each prediction
+                    for box_idx, (box, score, label) in enumerate(zip(coco_boxes, scores, labels)):
+                        prediction = {
+                            'image_id': current_image_id,
+                            'category_id': int(label),
+                            'bbox': box,  # [x, y, width, height] format
+                            'score': float(score)
+                        }
+                        all_predictions.append(prediction)
+                
+                # Process ground truths
+                if 'boxes' in target and len(target['boxes']) > 0:
+                    boxes = target['boxes'].cpu().numpy()
+                    labels = target['labels'].cpu().numpy()
+                    
+                    # Convert boxes to COCO format [x, y, width, height]
+                    coco_boxes = []
+                    areas = []
+                    for box in boxes:
+                        x1, y1, x2, y2 = box
+                        width = x2 - x1
+                        height = y2 - y1
+                        coco_boxes.append([float(x1), float(y1), float(width), float(height)])
+                        areas.append(float(width * height))
+                    
+                    # Store each ground truth
+                    for box_idx, (box, label, area) in enumerate(zip(coco_boxes, labels, areas)):
+                        ground_truth = {
+                            'id': annotation_id,
+                            'image_id': current_image_id,
+                            'category_id': int(label),
+                            'bbox': box,  # [x, y, width, height] format
+                            'area': float(area),
+                            'iscrowd': 0
+                        }
+                        all_ground_truths.append(ground_truth)
+                        annotation_id += 1
+    
+    # Create temporary COCO-format files
+    try:
+        # Ground truth file
+        gt_file = tempfile.NamedTemporaryFile(delete=False, mode='w')
+        gt_json = {
+            'images': [{'id': i, 'width': 640, 'height': 640} for i in range(image_id)],
+            'categories': [{'id': i+1, 'name': detector.config['CLASS_NAMES'][i], 'supercategory': 'none'} 
+                          for i in range(detector.num_classes)],
+            'annotations': all_ground_truths
+        }
+        json.dump(gt_json, gt_file)
+        gt_file.close()
+        
+        # Prediction file
+        pred_file = tempfile.NamedTemporaryFile(delete=False, mode='w')
+        json.dump(all_predictions, pred_file)
+        pred_file.close()
+        
+        # Create COCO objects
+        coco_gt = COCO(gt_file.name)
+        
+        # Check if we have any predictions
+        if len(all_predictions) == 0:
+            print("No predictions found, cannot calculate mAP.")
+            map_all, map_50, map_75 = 0.0, 0.0, 0.0
+        else:
+            # Load predictions
+            coco_dt = coco_gt.loadRes(pred_file.name)
+            
+            # Create COCO evaluator
+            coco_eval = COCOeval(coco_gt, coco_dt, 'bbox')
+            
+            # Set evaluation parameters
+            coco_eval.params.imgIds = list(range(image_id))  # All images
+            
+            # Use standard 3-element maxDets as expected by COCOeval
+            coco_eval.params.maxDets = [1, 10, 100]  # Standard COCO max detections
+            
+            # Run evaluation
+            coco_eval.evaluate()
+            coco_eval.accumulate()
+            
+            # Print the complete COCO metrics output
+            print("\nCOCO Evaluation Metrics:")
+            coco_eval.summarize()
+            
+            # Extract mAP values
+            # mAP@[0.5:0.95] (primary metric)
+            map_all = coco_eval.stats[0]
+            # mAP@0.5 (PASCAL VOC metric)
+            map_50 = coco_eval.stats[1]
+            # mAP@0.75 (strict metric)
+            map_75 = coco_eval.stats[2]
+            
+            print(f"COCO mAP@[0.5:0.95]: {map_all:.4f}")
+            print(f"COCO mAP@0.5: {map_50:.4f}")
+            print(f"COCO mAP@0.75: {map_75:.4f}")
+            
+            # Individual class metrics
+            if len(detector.config['CLASS_NAMES']) > 1:
+                print("\nPer-class AP@[0.5:0.95]:")
+                # Get per-class AP
+                for category_idx, category_id in enumerate(coco_gt.getCatIds()):
+                    if category_idx < len(detector.config['CLASS_NAMES']):
+                        try:
+                            # Set evaluation for this class only
+                            coco_eval.params.catIds = [category_id]
+                            coco_eval.evaluate()
+                            coco_eval.accumulate()
+                            # Extract AP for this class - modified to handle index errors safely
+                            precision = coco_eval.eval['precision']
+                            if precision.shape[2] > category_idx:
+                                class_ap = precision[0, :, category_idx, 0, 2].mean()
+                                class_name = detector.config['CLASS_NAMES'][category_idx]
+                                print(f"  {class_name}: {class_ap:.4f}")
+                            else:
+                                print(f"  Class {category_idx+1}: No valid predictions")
+                        except Exception as e:
+                            print(f"  Error calculating metrics for class {category_idx+1}: {e}")
+    
+    except Exception as e:
+        print(f"Error during mAP calculation: {e}")
+        traceback.print_exc()
+        map_all, map_50, map_75 = 0.0, 0.0, 0.0
+    
+    finally:
+        # Clean up temporary files
+        try:
+            os.unlink(gt_file.name)
+            os.unlink(pred_file.name)
+        except Exception as e:
+            print(f"Warning: Could not delete temporary files: {e}")
+    
+    return map_all, map_50, map_75

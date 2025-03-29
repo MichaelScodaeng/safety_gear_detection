@@ -291,3 +291,260 @@ class RCNNBase:
         iou = intersection / union if union > 0 else 0
 
         return iou
+    def train(self, train_loader, val_loader=None, epochs=10, optimizer=None, 
+          lr_scheduler=None, batch_size=4, gradient_accumulation_steps=1,
+          fine_tune=False, freeze_backbone=True, unfreeze_layers=None):
+        """
+        Train the model
+        
+        Args:
+            train_loader: DataLoader for training data
+            val_loader: DataLoader for validation data
+            epochs: Number of training epochs
+            optimizer: Optimizer to use (if None, AdamW will be created)
+            lr_scheduler: Learning rate scheduler
+            batch_size: Batch size
+            gradient_accumulation_steps: Number of steps to accumulate gradients
+            fine_tune: Whether to apply fine-tuning
+            freeze_backbone: Whether to freeze backbone during fine-tuning
+            unfreeze_layers: Which layers to unfreeze
+            
+        Returns:
+            dict: Training history
+        """
+        # Set model to training mode
+        self.model.train()
+        
+        # Create optimizer if none provided
+        if optimizer is None:
+            # Only optimize parameters that require gradients
+            params = [p for p in self.model.parameters() if p.requires_grad]
+            optimizer = torch.optim.AdamW(params, lr=0.001, weight_decay=0.0005)
+        
+        # Create scheduler if none provided
+        if lr_scheduler is None:
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, 
+                mode='min', 
+                factor=0.1, 
+                patience=3
+            )
+        
+        # Determine if we can use mixed precision
+        use_amp = torch.cuda.is_available()
+        scaler = torch.cuda.amp.GradScaler() if use_amp else None
+        
+        # Collect training arguments for printing
+        training_args = {
+            'epochs': epochs,
+            'batch_size': batch_size,
+            'lr': optimizer.param_groups[0]['lr'],
+            'weight_decay': optimizer.param_groups[0]['weight_decay'],
+            'gradient_accumulation_steps': gradient_accumulation_steps,
+            'fine_tune': fine_tune,
+            'freeze_backbone': freeze_backbone,
+            'unfreeze_layers': unfreeze_layers if unfreeze_layers else "None",
+            'use_amp': use_amp,
+            'optimizer': optimizer
+        }
+        
+        # Print hyperparameters
+        self.print_hyperparameters(training_args)
+    
+    # Rest of your training implementation...
+        
+        # Create optimizer if none provided
+        if optimizer is None:
+            # Only optimize parameters that require gradients
+            params = [p for p in self.model.parameters() if p.requires_grad]
+            optimizer = torch.optim.AdamW(params, lr=0.001, weight_decay=0.0005)
+        
+        # Create scheduler if none provided
+        if lr_scheduler is None:
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, 
+                mode='min', 
+                factor=0.1, 
+                patience=3, 
+                verbose=True
+            )
+        
+        # Import tqdm for progress bar
+        from tqdm import tqdm
+        
+        # Training history
+        history = {
+            'train_loss': [],
+            'val_loss': [],
+            'val_map': []
+        }
+        
+        # For mAP calculation
+        try:
+            from torchmetrics.detection.mean_ap import MeanAveragePrecision
+            mAP_metric = MeanAveragePrecision()
+        except ImportError:
+            print("torchmetrics not found. mAP will not be calculated.")
+            mAP_metric = None
+        
+        # Best model tracking
+        best_map = 0
+        patience = 5
+        patience_counter = 0
+        
+        # Training loop
+        for epoch in range(epochs):
+            print(f"Epoch {epoch+1}/{epochs}")
+            
+            # Initialize metrics
+            epoch_loss = 0
+            epoch_loss_classifier = 0
+            epoch_loss_box_reg = 0
+            epoch_loss_objectness = 0
+            epoch_loss_rpn_box_reg = 0
+            
+            # Progress bar
+            progress_bar = tqdm(train_loader, total=len(train_loader))
+            
+            # Batch loop
+            for images, targets in progress_bar:
+                # Move data to device
+                images = [image.to(self.device) for image in images]
+                targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+                
+                # Skip batches with no boxes
+                if any(len(t['boxes']) == 0 for t in targets):
+                    continue
+                    
+                # Zero gradients
+                optimizer.zero_grad()
+                
+                # Forward pass
+                loss_dict = self.model(images, targets)
+                
+                # Calculate total loss
+                losses = sum(loss for loss in loss_dict.values())
+                
+                # Backward pass
+                losses.backward()
+                
+                # Update weights
+                optimizer.step()
+                
+                # Update metrics
+                epoch_loss += losses.item()
+                if 'loss_classifier' in loss_dict:
+                    epoch_loss_classifier += loss_dict['loss_classifier'].item()
+                if 'loss_box_reg' in loss_dict:
+                    epoch_loss_box_reg += loss_dict['loss_box_reg'].item()
+                if 'loss_objectness' in loss_dict:
+                    epoch_loss_objectness += loss_dict['loss_objectness'].item()
+                if 'loss_rpn_box_reg' in loss_dict:
+                    epoch_loss_rpn_box_reg += loss_dict['loss_rpn_box_reg'].item()
+                
+                # Update progress bar
+                progress_bar.set_description(f"Loss: {losses.item():.4f}")
+            
+            # Calculate average losses
+            avg_loss = epoch_loss / len(train_loader)
+            avg_loss_classifier = epoch_loss_classifier / len(train_loader) if epoch_loss_classifier > 0 else 0
+            avg_loss_box_reg = epoch_loss_box_reg / len(train_loader) if epoch_loss_box_reg > 0 else 0
+            avg_loss_objectness = epoch_loss_objectness / len(train_loader) if epoch_loss_objectness > 0 else 0
+            avg_loss_rpn_box_reg = epoch_loss_rpn_box_reg / len(train_loader) if epoch_loss_rpn_box_reg > 0 else 0
+            
+            # Print metrics
+            print(f"Train Loss: {avg_loss:.4f}")
+            print(f"  Classifier Loss: {avg_loss_classifier:.4f}")
+            print(f"  Box Reg Loss: {avg_loss_box_reg:.4f}")
+            print(f"  Objectness Loss: {avg_loss_objectness:.4f}")
+            print(f"  RPN Box Reg Loss: {avg_loss_rpn_box_reg:.4f}")
+            
+            # Append to history
+            history['train_loss'].append(avg_loss)
+            
+            # Validation
+            if val_loader:
+                val_loss, val_map = self.validate(val_loader, mAP_metric)
+                history['val_loss'].append(val_loss)
+                history['val_map'].append(val_map)
+                print(f"Val Loss: {val_loss:.4f}, mAP: {val_map:.4f}")
+                
+                # Update learning rate
+                lr_scheduler.step(val_loss)
+                
+                # Checkpointing
+                if val_map > best_map:
+                    best_map = val_map
+                    patience_counter = 0
+                    # Save best model
+                    self.save_model(f"{self.config.get('output_path', './')}/best_model.pt")
+                    print(f"New best model saved with mAP: {val_map:.4f}")
+                else:
+                    patience_counter += 1
+                    print(f"mAP did not improve. Patience: {patience_counter}/{patience}")
+                
+                # Early stopping
+                if patience_counter >= patience:
+                    print(f"Early stopping triggered after {epoch+1} epochs")
+                    break
+            
+            # Gradually unfreeze deeper layers as training progresses
+            if epoch == int(epochs * 0.3):  # After 30% of epochs
+                print("Unfreezing layer4 of the backbone")
+                for name, param in self.model.named_parameters():
+                    if "backbone.layer4" in name:
+                        param.requires_grad = True
+            
+            elif epoch == int(epochs * 0.6):  # After 60% of epochs
+                print("Unfreezing FPN layers")
+                for name, param in self.model.named_parameters():
+                    if "fpn" in name:
+                        param.requires_grad = True
+            
+            # Save model checkpoint for this epoch
+            self.save_model(f"{self.config.get('output_path', './')}/model_epoch_{epoch+1}.pt")
+        
+        return history
+
+    def validate(self, data_loader, mAP_metric=None):
+        """Validate the model on a validation dataset"""
+        self.model.eval()
+        val_loss = 0
+        
+        if mAP_metric is None:
+            try:
+                from torchmetrics.detection.mean_ap import MeanAveragePrecision
+                mAP_metric = MeanAveragePrecision()
+            except ImportError:
+                print("torchmetrics not found. mAP will not be calculated.")
+                mAP_metric = None
+        
+        with torch.no_grad():
+            for images, targets in data_loader:
+                images = [img.to(self.device) for img in images]
+                targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+                
+                # Skip batches with no boxes
+                if any(len(t['boxes']) == 0 for t in targets):
+                    continue
+                    
+                # Forward pass
+                loss_dict = self.model(images, targets)
+                losses = sum(loss for loss in loss_dict.values())
+                val_loss += losses.item()
+                
+                # Get predictions for mAP calculation
+                if mAP_metric is not None:
+                    self.model.eval()
+                    predictions = self.model(images)
+                    mAP_metric.update(predictions, targets)
+        
+        # Calculate metrics
+        val_map = 0
+        if mAP_metric is not None:
+            metric_results = mAP_metric.compute()
+            val_map = metric_results['map'].item()
+            mAP_metric.reset()
+        
+        # Return average loss and mAP
+        return val_loss / len(data_loader), val_map

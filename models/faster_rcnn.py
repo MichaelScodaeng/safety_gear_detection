@@ -10,24 +10,18 @@ import torchvision
 from torchvision.models.detection import FasterRCNN
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from torchvision.models.detection import (
+    fasterrcnn_resnet50_fpn, 
+    fasterrcnn_resnet50_fpn_v2,
+    fasterrcnn_mobilenet_v3_large_fpn, 
+    fasterrcnn_mobilenet_v3_large_320_fpn
+)
+# Add this import for the classifier head replacement
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.ops import MultiScaleRoIAlign
 from PIL import Image
 
 from .base import RCNNBase
-
-import os
-import time
-import numpy as np
-import torch
-import torchvision
-from torchvision.models.detection import FasterRCNN
-from torchvision.models.detection.rpn import AnchorGenerator
-from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
-from torchvision.ops import MultiScaleRoIAlign
-from PIL import Image
-
-from .base import RCNNBase
-
 
 class FasterRCNN_Model(RCNNBase):
     """
@@ -36,7 +30,6 @@ class FasterRCNN_Model(RCNNBase):
     1. Replacing the selective search algorithm with a Region Proposal Network (RPN)
     2. Training the RPN and detector in an end-to-end fashion
     """
-
     def __init__(self, num_classes, device=None, config=None):
         """
         Initialize Faster R-CNN
@@ -49,353 +42,335 @@ class FasterRCNN_Model(RCNNBase):
         super().__init__(num_classes, device, config)
         self._initialize_model()
 
+    def print_model_info(self, model):
+        """Print model parameters and structure information"""
+        # Count and print total parameters
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
+        print(f"Non-trainable parameters: {total_params - trainable_params:,}")
+        
+        # Print model architecture summary
+        print("\nModel Architecture:")
+        print(model)
+
     def _initialize_model(self):
         """Initialize the Faster R-CNN model with a pre-trained backbone"""
-        # Using torchvision's implementation for simplicity
-        # Load a pre-trained backbone (ResNet-50 + FPN)
-        backbone = resnet_fpn_backbone(
-            'resnet50', weights="DEFAULT"
-        )
+        # Get model type from config or use custom implementation
+        model_type = self.config.get('model_type', 'custom')
+        
+        if model_type == 'custom':
+            print("Using custom implementation of Faster R-CNN")
+            # Using custom torchvision implementation
+            # Load a pre-trained backbone (ResNet-50 + FPN)
+            backbone = resnet_fpn_backbone(
+                'resnet50', weights="DEFAULT"
+            )
 
-        # Create anchor generator
-        anchor_generator = AnchorGenerator(
-            sizes=((32,), (64,), (128,), (256,), (512,)),
-            aspect_ratios=((0.5, 1.0, 2.0),) * 5
-        )
+            # Create anchor generator
+            anchor_generator = AnchorGenerator(
+                sizes=((32,), (64,), (128,), (256,), (512,)),
+                aspect_ratios=((0.5, 1.0, 2.0),) * 5
+            )
 
-        # Create ROI pooler
-        roi_pooler = MultiScaleRoIAlign(
-            featmap_names=['0', '1', '2', '3'],
-            output_size=7,
-            sampling_ratio=2
-        )
+            # Create ROI pooler
+            roi_pooler = MultiScaleRoIAlign(
+                featmap_names=['0', '1', '2', '3'],
+                output_size=7,
+                sampling_ratio=2
+            )
 
-        # Create Faster R-CNN model
-        self.model = FasterRCNN(
-            backbone=backbone,
-            num_classes=self.num_classes + 1,  # +1 for background class
-            rpn_anchor_generator=anchor_generator,
-            box_roi_pool=roi_pooler,
-            min_size=600,
-            max_size=1000,
-            box_score_thresh=0.05,
-            box_nms_thresh=0.5,
-            box_detections_per_img=100
-        )
-
+            # Create Faster R-CNN model
+            self.model = FasterRCNN(
+                backbone=backbone,
+                num_classes=self.num_classes + 1,  # +1 for background class
+                rpn_anchor_generator=anchor_generator,
+                box_roi_pool=roi_pooler,
+                min_size=640,
+                max_size=640,
+                box_score_thresh=0.05,
+                box_nms_thresh=0.5,
+                box_detections_per_img=100
+            )
+        else:
+            from torchvision.ops import MultiScaleRoIAlign
+            # Using pre-trained torchvision models   
+            # Use a more flexible ROI pooler to handle various feature map sizes
+            roi_pooler = MultiScaleRoIAlign(
+                featmap_names=['0', '1', '2', '3'],  # Use all FPN levels
+                output_size=7,                       # Standard output size
+                sampling_ratio=2                     # Use bilinear sampling
+            )
+    
+            print(f"Using pre-trained model: {model_type}")
+                    # Use pre-built torchvision models
+                    # First step: Initialize with pre-trained weights (91 classes for COCO)
+            if model_type == 'fasterrcnn_resnet50_fpn':
+                self.model = fasterrcnn_resnet50_fpn(
+                    weights="DEFAULT",  # Use pre-trained weights (91 classes)
+                    box_score_thresh=0.05,
+                    box_nms_thresh=0.5,
+                    box_detections_per_img=100,
+                    min_size=640,
+                    max_size=640,
+                    #box_roi_pool=roi_pooler
+                )
+            elif model_type == 'fasterrcnn_resnet50_fpn_v2':
+                self.model = fasterrcnn_resnet50_fpn_v2(
+                    weights="DEFAULT",  # Use pre-trained weights (91 classes)
+                    box_score_thresh=0.05,
+                    box_nms_thresh=0.5,
+                    box_detections_per_img=100,
+                    min_size=640,
+                    max_size=640,
+                    #box_roi_pool=roi_pooler
+                )
+            elif model_type == 'fasterrcnn_mobilenet_v3_large_fpn':
+                self.model = fasterrcnn_mobilenet_v3_large_fpn(
+                    weights="DEFAULT",  # Use pre-trained weights (91 classes)
+                    box_score_thresh=0.05,
+                    box_nms_thresh=0.5,
+                    box_detections_per_img=100,
+                    min_size=640,
+                    max_size=640,
+                    #box_roi_pool=roi_pooler
+                )
+            elif model_type == 'fasterrcnn_mobilenet_v3_large_320_fpn':
+                self.model = fasterrcnn_mobilenet_v3_large_320_fpn(
+                    weights="DEFAULT",  # Use pre-trained weights (91 classes)
+                    box_score_thresh=0.05,
+                    box_nms_thresh=0.5,
+                    box_detections_per_img=100,
+                    min_size=640,
+                    max_size=640,
+                    #box_roi_pool=roi_pooler
+                )
+            else:
+                raise ValueError(f"Unknown model type: {model_type}. " 
+                                 f"Choose from: 'custom', 'fasterrcnn_resnet50_fpn', "
+                                 f"'fasterrcnn_resnet50_fpn_v2', 'fasterrcnn_mobilenet_v3_large_fpn', "
+                                 f"'fasterrcnn_mobilenet_v3_large_320_fpn'")
+            
+            # Second step: Replace the box predictor head with a new one for our classes
+            if model_type != 'custom':
+                # Get the number of input features for the classifier
+                in_features = self.model.roi_heads.box_predictor.cls_score.in_features
+                
+                # Replace the pre-trained head with a new one for our number of classes
+                self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, self.num_classes + 1)
+                
+                print(f"Replaced classification head with a new one for {self.num_classes} classes + background")
+        
+        # Print model info
+        self.print_model_info(self.model)
+        
         # Move model to device
         self.model.to(self.device)
 
-    def fine_tune(self, model_path=None, freeze_backbone=True, train_rpn_only=False):
+    def fine_tune(self, model_path=None, freeze_backbone=True, unfreeze_layers=None):
         """
-        Fine-tune the model
+        Fine-tune the model with granular control over which layers to unfreeze
 
         Args:
             model_path (str, optional): Path to pre-trained model
             freeze_backbone (bool): Whether to freeze the backbone
-            train_rpn_only (bool): Whether to train only the RPN
+            unfreeze_layers (list, optional): List of layer names to unfreeze (even if backbone is frozen)
+                                            Examples: ['layer4', 'fpn', 'rpn']
         """
         if model_path and os.path.exists(model_path):
             # Load pre-trained model
             self.load_model(model_path)
 
-        # Freeze backbone layers if requested
+        # Start by freezing all parameters if requested
         if freeze_backbone:
-            # Freeze backbone
-            for param in self.model.backbone.parameters():
+            # Freeze all parameters
+            for param in self.model.parameters():
                 param.requires_grad = False
-
-        # Train only RPN if requested
-        if train_rpn_only:
-            # Freeze all layers except RPN
+        
+        # Get model type from config
+        model_type = self.config.get('model_type', 'custom')
+        
+        # Selectively unfreeze layers based on the model type
+        if unfreeze_layers:
             for name, param in self.model.named_parameters():
-                if "rpn" not in name:
-                    param.requires_grad = False
-
-    def train(self, train_loader, valid_loader=None, epochs=10, lr=0.0001, weight_decay=0.0005, batch_size=2):
+                # Check if any specified layer is in the parameter name
+                if any(layer in name for layer in unfreeze_layers):
+                    param.requires_grad = True
+                    print(f"Unfreezing: {name}")
+        
+        # Always unfreeze the classifier head (box predictor)
+        # This is critical since we replaced it with a new one
+        for param in self.model.roi_heads.box_predictor.parameters():
+            param.requires_grad = True
+            
+        print("Box predictor layers are always trainable")
+        
+        # Print summary of trainable parameters
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,} ({trainable_params/total_params:.2%})")
+        print(f"Frozen parameters: {total_params - trainable_params:,} ({(total_params - trainable_params)/total_params:.2%})")
+    def print_hyperparameters(self, training_args=None):
         """
-        Train the Faster R-CNN model with robust error handling
-
+        Print detailed information about model hyperparameters and training settings
+        
         Args:
-            train_loader (DataLoader): DataLoader for training
-            valid_loader (DataLoader, optional): DataLoader for validation
-            epochs (int): Number of epochs to train
-            lr (float): Learning rate (reduced from 0.001)
-            weight_decay (float): Weight decay for optimizer
-            batch_size (int): Batch size for training
-
-        Returns:
-            dict: Training history
+            training_args (dict, optional): Training arguments including learning rate, 
+                                        batch size, epochs, etc.
         """
-        # Initialize the model if not done yet
-        if self.model is None:
-            self._initialize_model()
-
-        # Move model to device
-        self.model.to(self.device)
-
-        # Set model to training mode
-        self.model.train()
-
-        # Create optimizer - try Adam instead of SGD for better stability
-        params = [p for p in self.model.parameters() if p.requires_grad]
-        optimizer = torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
-        # Alternative: Use SGD with lower learning rate
-        # optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=weight_decay)
-
-        # Use ReduceLROnPlateau scheduler instead of StepLR for adaptive learning rate
-        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=3, verbose=True
-        )
-
-        # Training history
-        history = {
-            'train_loss': [],
-            'train_loss_classifier': [],
-            'train_loss_box_reg': [],
-            'train_loss_objectness': [],
-            'train_loss_rpn_box_reg': [],
-            'val_map': [] if valid_loader else None,
-            'best_map': 0
-        }
-
-        # Training loop
-        nan_count = 0  # Count NaN occurrences to detect persistent issues
-        for epoch in range(epochs):
-            # Set model to training mode
-            self.model.train()
-
-            # Track losses
-            epoch_loss = 0
-            epoch_loss_classifier = 0
-            epoch_loss_box_reg = 0
-            epoch_loss_objectness = 0
-            epoch_loss_rpn_box_reg = 0
-            valid_batches = 0  # Count valid batches
-
-            # Start time
-            start_time = time.time()
-
-            # Iterate through training data with error handling
-            for i, (images, targets) in enumerate(train_loader):
-                try:
-                    # Skip empty batches
-                    if any(len(t['boxes']) == 0 for t in targets):
-                        print(f"Skipping batch {i + 1} with empty targets")
-                        continue
-
-                    # Move data to device
-                    images = [img.to(self.device) for img in images]
-                    targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
-
-                    # Verify boxes have proper dimensions
-                    skip_batch = False
-                    for t in targets:
-                        # Check for invalid boxes
-                        if t['boxes'].size(0) > 0:
-                            widths = t['boxes'][:, 2] - t['boxes'][:, 0]
-                            heights = t['boxes'][:, 3] - t['boxes'][:, 1]
-                            if torch.any(widths <= 0) or torch.any(heights <= 0):
-                                print(f"Found invalid box dimensions in batch {i + 1}, skipping")
-                                skip_batch = True
-                                break
-
-                    if skip_batch:
-                        continue
-
-                    # Forward pass
-                    loss_dict = self.model(images, targets)
-
-                    # Check for NaN values in loss
-                    if any(torch.isnan(loss).item() for loss in loss_dict.values()):
-                        nan_count += 1
-                        print(f"NaN detected in batch {i + 1}. Skipping... (Total NaN incidents: {nan_count})")
-
-                        # If too many NaNs, reduce learning rate
-                        if nan_count % 5 == 0:
-                            for param_group in optimizer.param_groups:
-                                param_group['lr'] *= 0.5
-                                print(f"Reducing learning rate to {param_group['lr']}")
-
-                        continue
-
-                    # Calculate total loss
-                    losses = sum(loss for loss in loss_dict.values())
-
-                    # Skip abnormally high losses that might lead to NaN
-                    if losses.item() > 50:
-                        print(f"Extremely high loss ({losses.item():.2f}) in batch {i + 1}. Skipping...")
-                        continue
-
-                    # Backward pass
-                    optimizer.zero_grad()
-                    losses.backward()
-
-                    # Add gradient clipping to prevent explosion
-                    torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
-
-                    optimizer.step()
-
-                    # Update epoch loss
-                    epoch_loss += losses.item()
-                    epoch_loss_classifier += loss_dict['loss_classifier'].item()
-                    epoch_loss_box_reg += loss_dict['loss_box_reg'].item()
-                    epoch_loss_objectness += loss_dict['loss_objectness'].item()
-                    epoch_loss_rpn_box_reg += loss_dict['loss_rpn_box_reg'].item()
-                    valid_batches += 1
-
-                    # Print progress
-                    if (i + 1) % 10 == 0:
-                        print(f"Epoch {epoch + 1}/{epochs}, Batch {i + 1}/{len(train_loader)}, "
-                              f"Loss: {losses.item():.4f}, "
-                              f"Class Loss: {loss_dict['loss_classifier'].item():.4f}, "
-                              f"Box Reg Loss: {loss_dict['loss_box_reg'].item():.4f}, "
-                              f"Objectness Loss: {loss_dict['loss_objectness'].item():.4f}, "
-                              f"RPN Box Reg Loss: {loss_dict['loss_rpn_box_reg'].item():.4f}")
-
-                except Exception as e:
-                    print(f"Error in batch {i + 1}: {str(e)}")
-                    continue
-
-            # Check if training made progress
-            if valid_batches == 0:
-                print("No valid batches in this epoch. Check your data or reduce learning rate further.")
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] *= 0.1
-                    print(f"Reducing learning rate to {param_group['lr']}")
-                continue
-
-            # Calculate average loss
-            epoch_loss /= valid_batches
-            epoch_loss_classifier /= valid_batches
-            epoch_loss_box_reg /= valid_batches
-            epoch_loss_objectness /= valid_batches
-            epoch_loss_rpn_box_reg /= valid_batches
-
-            # Update history
-            history['train_loss'].append(epoch_loss)
-            history['train_loss_classifier'].append(epoch_loss_classifier)
-            history['train_loss_box_reg'].append(epoch_loss_box_reg)
-            history['train_loss_objectness'].append(epoch_loss_objectness)
-            history['train_loss_rpn_box_reg'].append(epoch_loss_rpn_box_reg)
-
-            # Update learning rate based on training loss
-            lr_scheduler.step(epoch_loss)
-
-            # Validation
-            if valid_loader:
-                # Set model to evaluation mode
-                self.model.eval()
-
-                # Calculate mAP on validation set
-                val_metrics = self.evaluate(valid_loader)
-                mAP = val_metrics['mAP']
-                history['val_map'].append(mAP)
-
-                # Print results
-                print(f"Epoch {epoch + 1}/{epochs}, "
-                      f"Train Loss: {epoch_loss:.4f}, "
-                      f"Val mAP: {mAP:.4f}, "
-                      f"Time: {time.time() - start_time:.2f}s")
-
-                # Save best model
-                if mAP > history['best_map']:
-                    history['best_map'] = mAP
-                    self.save_model(os.path.join(self.config.get('output_path', '.'), 'best_model.pt'))
-            else:
-                print(f"Epoch {epoch + 1}/{epochs}, "
-                      f"Train Loss: {epoch_loss:.4f}, "
-                      f"Time: {time.time() - start_time:.2f}s")
-
-                # Save checkpoint every epoch
-                self.save_model(os.path.join(self.config.get('output_path', '.'), f'checkpoint_epoch_{epoch + 1}.pt'))
-
-        return history
-
-    def predict(self, image, confidence_threshold=0.5, nms_threshold=0.3):
-        """
-        Run inference on an image
-
-        Args:
-            image: Image to run inference on (numpy array or PIL image)
-            confidence_threshold (float): Confidence threshold for detections
-            nms_threshold (float): NMS threshold
-
-        Returns:
-            tuple: (boxes, labels, scores)
-        """
-        # Initialize model if not done yet
-        if self.model is None:
-            self._initialize_model()
-
-        # Set model to evaluation mode
-        self.model.eval()
-
-        # Convert image to the right format
-        if isinstance(image, str):
-            # Load image from path
-            if os.path.exists(image):
-                image = Image.open(image).convert("RGB")
-            else:
-                raise FileNotFoundError(f"Image not found: {image}")
-
-        if isinstance(image, np.ndarray):
-            # Convert numpy array to tensor
-            transform = self._get_transform(train=False)
-            transformed = transform(image=image, bboxes=[], labels=[])
-            image_tensor = transformed['image']
-        elif isinstance(image, Image.Image):
-            # Convert PIL image to tensor
-            transform = self._get_transform(train=False)
-            image_np = np.array(image)
-            transformed = transform(image=image_np, bboxes=[], labels=[])
-            image_tensor = transformed['image']
-        elif isinstance(image, torch.Tensor):
-            # Already a tensor
-            image_tensor = image
+        # Import for pretty printing
+        try:
+            from tabulate import tabulate
+            use_tabulate = True
+        except ImportError:
+            use_tabulate = False
+            
+        print("\n" + "="*80)
+        print("FASTER R-CNN MODEL CONFIGURATION")
+        print("="*80)
+        
+        # Model architecture details
+        model_info = [
+            ["Model Type", self.config.get('model_type', 'custom')],
+            ["Number of Classes", f"{self.num_classes} (+ 1 background)"],
+            ["Device", self.device],
+        ]
+        
+        # Model parameters
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        model_info.extend([
+            ["Total Parameters", f"{total_params:,}"],
+            ["Trainable Parameters", f"{trainable_params:,} ({trainable_params/total_params:.2%})"],
+            ["Frozen Parameters", f"{total_params - trainable_params:,} ({(total_params - trainable_params)/total_params:.2%})"]
+        ])
+        
+        # Model size in MB
+        model_size_mb = sum(p.numel() * p.element_size() for p in self.model.parameters()) / (1024 * 1024)
+        model_info.append(["Model Size", f"{model_size_mb:.2f} MB"])
+        
+        # RPN Parameters
+        try:
+            anchor_sizes = self.model.rpn.anchor_generator.sizes
+            anchor_ratios = self.model.rpn.anchor_generator.aspect_ratios
+            rpn_fg_iou_thresh = getattr(self.model.rpn, 'fg_iou_thresh', 'N/A')
+            rpn_bg_iou_thresh = getattr(self.model.rpn, 'bg_iou_thresh', 'N/A')
+            
+            model_info.extend([
+                ["RPN Anchor Sizes", str(anchor_sizes)],
+                ["RPN Anchor Ratios", str(anchor_ratios)],
+                ["RPN FG IoU Threshold", str(rpn_fg_iou_thresh)],
+                ["RPN BG IoU Threshold", str(rpn_bg_iou_thresh)]
+            ])
+        except Exception as e:
+            print(f"Could not extract RPN parameters: {e}")
+        
+        # ROI Parameters
+        try:
+            box_score_thresh = self.model.roi_heads.score_thresh
+            box_nms_thresh = self.model.roi_heads.nms_thresh
+            box_detections_per_img = self.model.roi_heads.detections_per_img
+            box_fg_iou_thresh = getattr(self.model.roi_heads, 'fg_iou_thresh', 'N/A')
+            box_bg_iou_thresh = getattr(self.model.roi_heads, 'bg_iou_thresh', 'N/A')
+            
+            model_info.extend([
+                ["Box Score Threshold", str(box_score_thresh)],
+                ["Box NMS Threshold", str(box_nms_thresh)],
+                ["Max Detections per Image", str(box_detections_per_img)],
+                ["Box FG IoU Threshold", str(box_fg_iou_thresh)],
+                ["Box BG IoU Threshold", str(box_bg_iou_thresh)]
+            ])
+        except Exception as e:
+            print(f"Could not extract ROI parameters: {e}")
+        
+        # Image transform parameters
+        try:
+            min_size = self.model.transform.min_size[0] if isinstance(self.model.transform.min_size, tuple) else self.model.transform.min_size
+            max_size = self.model.transform.max_size
+            
+            model_info.extend([
+                ["Min Image Size", str(min_size)],
+                ["Max Image Size", str(max_size)]
+            ])
+        except Exception as e:
+            print(f"Could not extract transform parameters: {e}")
+        
+        # Print model architecture details
+        if use_tabulate:
+            print(tabulate(model_info, headers=["Parameter", "Value"], tablefmt="grid"))
         else:
-            raise TypeError(f"Unsupported image type: {type(image)}")
-
-        # Add batch dimension and move to device
-        if image_tensor.dim() == 3:
-            image_tensor = image_tensor.unsqueeze(0)
-        image_tensor = image_tensor.to(self.device)
-
-        # Run inference
-        with torch.no_grad():
-            # torchvision's Faster R-CNN returns a list of dictionaries in eval mode
-            prediction = self.model(image_tensor)[0]
-
-            # Get predictions
-            boxes = prediction['boxes'].cpu().numpy()
-            scores = prediction['scores'].cpu().numpy()
-            labels = prediction['labels'].cpu().numpy()
-
-            # Filter by confidence threshold
-            keep = scores >= confidence_threshold
-            boxes = boxes[keep]
-            scores = scores[keep]
-            labels = labels[keep]
-
-            # Convert class indices back to original indices (undo the +1 that was added for background)
-            labels = labels - 1
-
-        return boxes, labels, scores
-
-    def visualize_prediction(self, image, boxes=None, labels=None, scores=None, figsize=(12, 12)):
-        """
-        Visualize predictions on an image
-
-        Args:
-            image: Image to visualize (numpy array or PIL image)
-            boxes: Bounding boxes in [x1, y1, x2, y2] format
-            labels: Class labels
-            scores: Confidence scores
-            figsize: Figure size
-
-        Returns:
-            Image with bounding boxes drawn
-        """
-        from models.base import RCNNBase
-        # Use the base class implementation
-        return super().visualize_prediction(image, boxes, labels, scores, figsize)
+            for param, value in model_info:
+                print(f"{param:30} {value}")
+        
+        # Print training parameters if provided
+        if training_args:
+            print("\n" + "="*80)
+            print("TRAINING CONFIGURATION")
+            print("="*80)
+            
+            train_info = [
+                ["Epochs", training_args.get('epochs', 'N/A')],
+                ["Batch Size", training_args.get('batch_size', 'N/A')],
+                ["Learning Rate", training_args.get('lr', 'N/A')],
+                ["Weight Decay", training_args.get('weight_decay', 'N/A')],
+                ["Gradient Accumulation Steps", training_args.get('gradient_accumulation_steps', 'N/A')],
+                ["Fine-tuning", training_args.get('fine_tune', 'N/A')],
+                ["Freeze Backbone", training_args.get('freeze_backbone', 'N/A')],
+                ["Unfreeze Layers", training_args.get('unfreeze_layers', 'N/A')],
+                ["Mixed Precision", training_args.get('use_amp', 'N/A')]
+            ]
+            
+            # Print training parameters
+            if use_tabulate:
+                print(tabulate(train_info, headers=["Parameter", "Value"], tablefmt="grid"))
+            else:
+                for param, value in train_info:
+                    print(f"{param:30} {value}")
+            
+            # Print optimizer details if provided
+            if 'optimizer' in training_args:
+                opt = training_args['optimizer']
+                opt_type = type(opt).__name__
+                print("\nOptimizer:", opt_type)
+                
+                # Print learning rates for each parameter group
+                if hasattr(opt, 'param_groups'):
+                    print("\nParameter Groups:")
+                    for i, group in enumerate(opt.param_groups):
+                        group_info = [
+                            ["Group", i],
+                            ["Learning Rate", group.get('lr', 'N/A')],
+                            ["Weight Decay", group.get('weight_decay', 'N/A')],
+                            ["Parameters", len(group.get('params', []))]
+                        ]
+                        
+                        if use_tabulate:
+                            print(tabulate(group_info, headers=["Property", "Value"], tablefmt="simple"))
+                        else:
+                            for prop, val in group_info:
+                                print(f"  {prop}: {val}")
+                        print()
+        
+        # Print CUDA memory stats if available
+        if torch.cuda.is_available():
+            print("\n" + "="*80)
+            print("CUDA MEMORY USAGE")
+            print("="*80)
+            
+            cuda_info = [
+                ["CUDA Device", torch.cuda.get_device_name(0)],
+                ["Memory Allocated", f"{torch.cuda.memory_allocated(0)/1024**2:.2f} MB"],
+                ["Memory Reserved", f"{torch.cuda.memory_reserved(0)/1024**2:.2f} MB"],
+                ["Max Memory Allocated", f"{torch.cuda.max_memory_allocated(0)/1024**2:.2f} MB"]
+            ]
+            
+            if use_tabulate:
+                print(tabulate(cuda_info, headers=["Metric", "Value"], tablefmt="grid"))
+            else:
+                for metric, value in cuda_info:
+                    print(f"{metric:30} {value}")
+        
+        print("\n" + "="*80 + "\n")

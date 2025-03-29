@@ -8,7 +8,7 @@ import torch
 class CFG:
     """Configuration class for safety gear detection system."""
     
-    DEBUG = False
+    DEBUG = True
     FRACTION = 0.05 if DEBUG else 1.0
     SEED = 42
 
@@ -28,9 +28,9 @@ class CFG:
         9: "Vehicle"
     }
     NUM_CLASSES = len(PPE_CLASSES)
-
+    CLASS_NAMES = list(PPE_CLASSES.values())
     # Training
-    EPOCHS = 3 if DEBUG else 30
+    EPOCHS = 2 if DEBUG else 30
     BATCH_SIZE = 4 if DEBUG else 12
     IMGSZ = 640  # Resize to 640x640
     LEARNING_RATE = 0.001

@@ -114,8 +114,8 @@ def get_transforms(train=False):
     """
     if train:
         return A.Compose([
-            A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.2),
+            #A.HorizontalFlip(p=0.5),
+            #A.RandomBrightnessContrast(p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2(),
         ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
@@ -124,8 +124,9 @@ def get_transforms(train=False):
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2(),
         ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
-
-def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4):
+def collate_fn(batch):
+        return tuple(zip(*batch))
+def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4,shuffle = True):
     """
     Create data loaders for training, validation and testing
     
@@ -165,8 +166,7 @@ def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4):
             test_dataset = SafetyGearDataset(test_img_dir, test_label_dir, transform=val_transform)
     
     # Custom collate function for data loaders
-    def collate_fn(batch):
-        return tuple(zip(*batch))
+    
     
     # Create data loaders
     train_loader = None
@@ -174,9 +174,9 @@ def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4):
         train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=shuffle,
             collate_fn=collate_fn,
-            num_workers=4
+            num_workers=0
         )
     
     valid_loader = None
@@ -186,7 +186,7 @@ def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4):
             batch_size=batch_size,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=4
+            num_workers=0
         )
     
     test_loader = None
@@ -196,7 +196,7 @@ def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4):
             batch_size=batch_size,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=4
+            num_workers=0
         )
     
     return train_loader, valid_loader, test_loader

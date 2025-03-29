@@ -1,23 +1,34 @@
 # Core dependencies
-torch>=1.9.0
-torchvision>=0.10.0
-opencv-python>=4.5.3
+# Note: Install PyTorch, TorchVision, and TorchAudio with CUDA support using:
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Deep Learning
 numpy>=1.20.0
 matplotlib>=3.4.0
 pillow>=8.2.0
+opencv-python>=4.5.3
+torchmetrics>=0.9.0
+pycocotools>=2.0.2  # Already included, but highlighting it as you mentioned
 
-# Data processing
+# Data processing and visualization
 albumentations>=1.0.0
 scikit-learn>=0.24.0
 pandas>=1.3.0
-
-# Visualization
 seaborn>=0.11.0
 
-# Utils
+# Utilities
 tqdm>=4.62.0
 pyyaml>=5.4.0
 
-# Optional: GPU support
-# Uncomment if using CUDA
-# cudatoolkit>=11.1
+# Standard library packages - no need to install these
+# argparse  # Part of Python standard library
+# json  # Part of Python standard library
+# pathlib  # Part of Python standard library
+# tempfile  # Part of Python standard library
+# traceback  # Part of Python standard library
+# time  # Part of Python standard library
+# os  # Part of Python standard library
+
+# Optional: Development Tools
+#jupyter>=1.0.0
+#ipywidgets>=7.6.5
