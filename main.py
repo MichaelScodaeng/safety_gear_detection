@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 import numpy as np
 from config import CFG
-from data.dataset import SafetyGearDataset, get_transforms, create_data_loaders
+from data.dataset import SafetyGearDataset, get_transforms, create_data_loaders, create_yolo_data_loaders, YOLODataset
 from detector import SafetyGearDetector
 
 
@@ -19,9 +19,15 @@ def parse_args():
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'evaluate', 'predict'],
                         help='Operation mode (train, evaluate, predict)')
     parser.add_argument('--model_type', type=str, default='fasterrcnn_resnet50_fpn_v2',
-                        choices=['custom', 'fasterrcnn_resnet50_fpn', 'fasterrcnn_resnet50_fpn_v2', 
-                                'fasterrcnn_mobilenet_v3_large_fpn', 'fasterrcnn_mobilenet_v3_large_320_fpn'],
-                        help='Model architecture to use')
+             choices=['custom', 'rcnn', 'fast_rcnn',
+                     'fasterrcnn_resnet50_fpn', 'fasterrcnn_resnet50_fpn_v2', 
+                     'fasterrcnn_mobilenet_v3_large_fpn', 'fasterrcnn_mobilenet_v3_large_320_fpn',
+                     'maskrcnn_resnet50_fpn', 'maskrcnn_resnet50_fpn_v2',
+                     'yolov4n', 'yolov4s', 'yolov4m', 'yolov4l', 'yolov4x',
+                     'yolov8n', 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x',
+                     'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x',
+                     'yolo12n', 'yolo12s', 'yolo12m', 'yolo12l', 'yolo12x'],
+             help='Model architecture to use')
     parser.add_argument('--data_path', type=str, default=CFG.CSS_DATA_PATH,
                         help='Path to the dataset directory')
     parser.add_argument('--model_path', type=str, default=None,
@@ -149,11 +155,40 @@ def train_model(args):
     print("Validation Path: ", valid_dir)
     print("Test Path: ", test_dir)
     
-    # Create data loaders directly
-    train_loader, valid_loader, test_loader = create_data_loaders(
-        train_dir, valid_dir, test_dir, batch_size=args.batch_size, shuffle=True
-    )
-
+    if args.model_type.startswith(('yolov4', 'yolov8', 'yolov12')):
+        # For YOLO models, we'll create a data.yaml file
+        from data.dataset import create_yolo_data_loaders
+        train_loader, valid_loader, test_loader = create_yolo_data_loaders(
+            train_dir=train_dir,
+            valid_dir=valid_dir,
+            test_dir=test_dir,
+            batch_size=args.batch_size,
+            img_size=640
+        )
+        
+        # Create the detector with the specified model type
+        detector = SafetyGearDetector(model_type=args.model_type)
+        
+        # Train the model (YOLO will ignore the loaders)
+        history = detector.train(
+            train_loader,
+            valid_loader, 
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=CFG.LEARNING_RATE,
+            weight_decay=CFG.WEIGHT_DECAY
+        )
+        
+        return detector
+    else:
+        # Use standard data loaders for RCNN models
+        from data.dataset import create_data_loaders
+        train_loader, valid_loader, test_loader = create_data_loaders(
+            train_dir=os.path.join(args.data_path, 'train'),
+            valid_dir=os.path.join(args.data_path, 'val'),
+            test_dir=os.path.join(args.data_path, 'test'),
+            batch_size=args.batch_size
+        )
     if train_loader is None or valid_loader is None or test_loader is None:
         print("No training or validation or test data found. Please check the data path.")
         return None

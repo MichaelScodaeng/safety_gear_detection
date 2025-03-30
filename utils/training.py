@@ -107,6 +107,9 @@ def print_model_info(detector, training_args=None):
     else:
         for param, value in model_info:
             print(f"{param:30} {value}")
+    print(detector.model.model)
+    for name, param in detector.model.model.named_parameters():
+        print(f"Layer: {name}, requires_grad: {param.requires_grad}")
 
 
 def train_model(detector, train_loader, valid_loader=None, epochs=10, 
@@ -140,6 +143,48 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
     params = [p for p in detector.model.model.parameters() if p.requires_grad]
     optimizer = optim.AdamW(params, lr=lr, weight_decay=weight_decay)
     
+    
+    
+    # Create learning rate scheduler
+    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.1, patience=3, verbose=True
+    )
+    
+    # Freeze backbone if specified
+    if freeze_backbone:
+        print("Freezing backbone")
+        for name, param in detector.model.model.named_parameters():
+            if "backbone" in name:
+                param.requires_grad = False
+    
+    # Unfreeze specific layers if specified
+    if unfreeze_layers is not None:
+        print(f"Currently Unfreezing layers: {unfreeze_layers}")
+        for name, param in detector.model.model.named_parameters():
+            for layer in unfreeze_layers:
+                if layer in name:
+                    param.requires_grad = True
+    
+    # Initialize mixed precision training if available
+    use_amp = torch.cuda.is_available()
+    scaler = GradScaler() if use_amp else None
+    print("Currently using GPUs/TPUs:", torch.cuda.device_count())
+    print("GPU/TPU name:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
+    print("Using device:", detector.device)
+    print("Unfreezed layers:", unfreeze_layers if unfreeze_layers else "None")
+    print("Unfreezed backbone:", freeze_backbone)
+    print("Fine-tuning:", fine_tune)
+    
+    if use_amp:
+        print("Using mixed precision training")
+    
+    # Training history
+    history = {
+        'train_loss': [],
+        'val_loss': [],
+        'val_map': []
+    }
+    
     # Prepare training arguments for printing
     training_args = {
         'epochs': epochs,
@@ -156,44 +201,7 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
     
     # Print model information
     print_model_info(detector, training_args)
-    
-    # Create learning rate scheduler
-    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.1, patience=3, verbose=True
-    )
-    
-    # Freeze backbone if specified
-    if freeze_backbone:
-        print("Freezing backbone")
-        for name, param in detector.model.model.named_parameters():
-            if "backbone" in name:
-                param.requires_grad = False
-    
-    # Unfreeze specific layers if specified
-    if unfreeze_layers is not None:
-        print(f"Unfreezing layers: {unfreeze_layers}")
-        for name, param in detector.model.model.named_parameters():
-            for layer in unfreeze_layers:
-                if layer in name:
-                    param.requires_grad = True
-    
-    # Initialize mixed precision training if available
-    use_amp = torch.cuda.is_available()
-    scaler = GradScaler() if use_amp else None
-    print("Currently using GPUs/TPUs:", torch.cuda.device_count())
-    print("GPU/TPU name:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
-    print("Using device:", detector.device)
-    
-    if use_amp:
-        print("Using mixed precision training")
-    
-    # Training history
-    history = {
-        'train_loss': [],
-        'val_loss': [],
-        'val_map': []
-    }
-    
+
     # Start training
     for epoch in range(epochs):
         print(f"\nEpoch {epoch+1}/{epochs}")

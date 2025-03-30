@@ -375,3 +375,127 @@ def apply_nms(boxes, labels, scores, iou_threshold=0.3):
         return np.array(keep_boxes), np.array(keep_labels), np.array(keep_scores)
     else:
         return np.empty((0, 4)), np.empty(0), np.empty(0)
+
+def visualize_yolo_results(results, image=None, figsize=(12, 12), save_path=None):
+    """
+    Visualize results from a YOLO model prediction or training
+    
+    Args:
+        results: Results from YOLO model.predict() or model.train()
+        image: Original image (optional, if not provided will use the image from results)
+        figsize: Figure size for the plot
+        save_path: Path to save the visualization (optional)
+        
+    Returns:
+        Matplotlib figure with visualized results
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Check if results is from training (DetMetrics) or prediction (Results)
+    if hasattr(results, 'box') and hasattr(results, 'metrics'):
+        # This is training metrics, plot training graphs
+        fig, ax = plt.subplots(1, 3, figsize=figsize)
+        fig.suptitle("YOLO Training Results", fontsize=16)
+        
+        # Extract metrics
+        metrics = results.metrics
+        
+        # Plot precision-recall curve if available
+        if hasattr(results, 'pr_curve') and results.pr_curve is not None:
+            for i, class_name in enumerate(results.names):
+                if i < len(results.pr_curve):
+                    precision = results.pr_curve[i][:, 0]
+                    recall = results.pr_curve[i][:, 1]
+                    ax[0].plot(recall, precision, label=class_name)
+            
+            ax[0].set_xlabel('Recall')
+            ax[0].set_ylabel('Precision')
+            ax[0].set_title('Precision-Recall Curve')
+            ax[0].legend()
+        
+        # Plot mAP progress if available
+        if hasattr(results, 'maps') and results.maps is not None:
+            epochs = range(1, len(results.maps) + 1)
+            ax[1].plot(epochs, results.maps)
+            ax[1].set_xlabel('Epoch')
+            ax[1].set_ylabel('mAP50-95')
+            ax[1].set_title('mAP Progress')
+        
+        # Plot loss progress if available
+        if hasattr(results, 'box_loss') and results.box_loss is not None:
+            epochs = range(1, len(results.box_loss) + 1)
+            ax[2].plot(epochs, results.box_loss, label='Box Loss')
+            if hasattr(results, 'cls_loss') and results.cls_loss is not None:
+                ax[2].plot(epochs, results.cls_loss, label='Class Loss')
+            if hasattr(results, 'dfl_loss') and results.dfl_loss is not None:
+                ax[2].plot(epochs, results.dfl_loss, label='DFL Loss')
+            ax[2].set_xlabel('Epoch')
+            ax[2].set_ylabel('Loss')
+            ax[2].set_title('Training Loss')
+            ax[2].legend()
+        
+        # Print metrics summary
+        print(f"Final mAP50-95: {results.map50_95:.3f}")
+        print(f"Final mAP50: {results.map50:.3f}")
+        
+    else:
+        # This is prediction results, visualize detections
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Use image from results if not provided
+        if image is None:
+            if isinstance(results, list) and len(results) > 0 and hasattr(results[0], 'orig_img'):
+                image = results[0].orig_img
+            else:
+                raise ValueError("Image not provided and not found in results")
+        
+        # Display image
+        if isinstance(image, str):
+            # Load image if it's a path
+            image = plt.imread(image)
+        
+        ax.imshow(image)
+        
+        # Process results based on type
+        if isinstance(results, list) and len(results) > 0:
+            # For prediction results
+            if hasattr(results[0], 'names'):
+                num_classes = len(results[0].names)
+                colors = plt.cm.hsv(np.linspace(0, 1, num_classes))
+                
+                # Draw detections
+                for r in results:
+                    boxes = r.boxes.xyxy.cpu().numpy()
+                    cls = r.boxes.cls.cpu().numpy().astype(int)
+                    confs = r.boxes.conf.cpu().numpy()
+                    
+                    for box, cl, conf in zip(boxes, cls, confs):
+                        x1, y1, x2, y2 = box
+                        color = colors[cl]
+                        
+                        # Draw rectangle
+                        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, 
+                                           fill=False, edgecolor=color, linewidth=2)
+                        ax.add_patch(rect)
+                        
+                        # Add label
+                        class_name = r.names[cl] if hasattr(r, 'names') else f"Class {cl}"
+                        ax.text(x1, y1-5, f"{class_name} {conf:.2f}", 
+                               color='white', fontsize=10,
+                               bbox=dict(facecolor=color, alpha=0.7))
+                
+                ax.set_title(f"YOLO Detection Results")
+                ax.axis('off')
+            else:
+                ax.set_title("No detection results found")
+        else:
+            ax.set_title("No valid results provided")
+    
+    plt.tight_layout()
+    
+    # Save if requested
+    if save_path:
+        plt.savefig(save_path)
+    
+    return fig

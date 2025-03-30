@@ -372,5 +372,8 @@ class FasterRCNN_Model(RCNNBase):
             else:
                 for metric, value in cuda_info:
                     print(f"{metric:30} {value}")
-        
+        # Print the structure and check requires_grad for each layer
+        print("Model Structure and requires_grad status:")
+        for name, param in self.model.named_parameters():
+            print(f"Layer: {name}, requires_grad: {param.requires_grad}")
         print("\n" + "="*80 + "\n")

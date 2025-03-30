@@ -17,7 +17,7 @@ from PIL import Image
 from .base import RCNNBase
 
 
-class FastRCNN(RCNNBase):
+class FastRCNN_Model(RCNNBase):
     """
     Implementation of Fast R-CNN
     Fast R-CNN improves on R-CNN by:
@@ -78,6 +78,7 @@ class FastRCNN(RCNNBase):
 
         # Move model to device
         self.model.to(self.device)
+        self.print_hyperparameters()
 
     def _generate_proposals(self, image, max_proposals=2000):
         """
@@ -651,3 +652,84 @@ class FastRCNN(RCNNBase):
 
         return self._calculate_map(all_pred_boxes, all_pred_scores, all_pred_labels,
                                    all_gt_boxes, all_gt_labels, iou_threshold)
+    def print_hyperparameters(self, training_args=None):
+        """
+        Print detailed information about model hyperparameters and training settings
+        
+        Args:
+            training_args (dict, optional): Training arguments including learning rate, 
+                                        batch size, epochs, etc.
+        """
+        # Import for pretty printing
+        try:
+            from tabulate import tabulate
+            use_tabulate = True
+        except ImportError:
+            use_tabulate = False
+            
+        print("\n" + "="*80)
+        print("FAST R-CNN MODEL CONFIGURATION")
+        print("="*80)
+        
+        # Model architecture details
+        model_info = [
+            ["Model Type", "Fast R-CNN"],
+            ["Number of Classes", f"{self.num_classes} (+ 1 background)"],
+            ["Device", self.device],
+        ]
+        
+        # Model parameters
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        model_info.extend([
+            ["Total Parameters", f"{total_params:,}"],
+            ["Trainable Parameters", f"{trainable_params:,} ({trainable_params/total_params:.2%})"],
+            ["Frozen Parameters", f"{total_params - trainable_params:,} ({(total_params - trainable_params)/total_params:.2%})"]
+        ])
+        
+        # Model size in MB
+        model_size_mb = sum(p.numel() * p.element_size() for p in self.model.parameters()) / (1024 * 1024)
+        model_info.append(["Model Size", f"{model_size_mb:.2f} MB"])
+        
+        # Backbone details
+        try:
+            model_info.append(["Backbone", "ResNet50"])
+        except Exception as e:
+            print(f"Could not extract backbone details: {e}")
+        
+        # RoI Pooling details
+        try:
+            roi_output_size = self.roi_pool.output_size
+            roi_spatial_scale = self.roi_pool.spatial_scale
+            
+            model_info.extend([
+                ["RoI Pool Output Size", str(roi_output_size)],
+                ["RoI Pool Spatial Scale", str(roi_spatial_scale)]
+            ])
+        except Exception as e:
+            print(f"Could not extract RoI pooling details: {e}")
+        
+        # Print model architecture details
+        if use_tabulate:
+            print(tabulate(model_info, headers=["Parameter", "Value"], tablefmt="grid"))
+        else:
+            for param, value in model_info:
+                print(f"{param}: {value}")
+        
+        # Print training parameters if provided
+        if training_args:
+            print("\n" + "="*80)
+            print("TRAINING CONFIGURATION")
+            print("="*80)
+            
+            training_info = []
+            for key, value in training_args.items():
+                training_info.append([key, value])
+            
+            if use_tabulate:
+                print(tabulate(training_info, headers=["Parameter", "Value"], tablefmt="grid"))
+            else:
+                for param, value in training_info:
+                    print(f"{param}: {value}")
+        
+        print("="*80)

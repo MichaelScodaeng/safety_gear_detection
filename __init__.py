@@ -12,8 +12,9 @@ __author__ = 'Safety Gear Detection Team'
 from config import CFG
 from data.dataset import SafetyGearDataset, get_transforms, create_data_loaders
 from models.rcnn import RCNN
-from models.fast_rcnn import FastRCNN 
+from models.fast_rcnn import FastRCNN_Model 
 from models.faster_rcnn import FasterRCNN_Model
+from models.mask_rcnn import MaskRCNN_Model
 from detector import SafetyGearDetector
 
 # Setup directories on import

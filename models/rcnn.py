@@ -3,6 +3,7 @@ Implementation of the original R-CNN algorithm for Safety Gear Detection.
 """
 
 import os
+import time
 import cv2
 import numpy as np
 import torch

@@ -1,0 +1,15 @@
+names:
+- Hardhat
+- Mask
+- NO-Hardhat
+- NO-Mask
+- NO-Safety Vest
+- Person
+- Safety Cone
+- Safety Vest
+- Machinery
+- Vehicle
+nc: 10
+test: D:\Github\safety_gear_detection\safety_gear_detection\safety_gear_detection\css-data\test\images
+train: D:\Github\safety_gear_detection\safety_gear_detection\safety_gear_detection\css-data\train\images
+val: D:\Github\safety_gear_detection\safety_gear_detection\safety_gear_detection\css-data\val\images

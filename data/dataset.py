@@ -1,7 +1,8 @@
 """
 Dataset implementation for the Safety Gear Detection System.
 """
-
+import yaml 
+from config import CFG
 import os
 import cv2
 import numpy as np
@@ -81,7 +82,14 @@ class SafetyGearDataset(Dataset):
         # Convert to numpy arrays
         boxes = np.array(boxes, dtype=np.float32)
         labels = np.array(labels, dtype=np.int64)
+        # In your SafetyGearDataset __getitem__ method
+        img_height, img_width = image.shape[:2]
+        masks = torch.zeros((len(boxes), img_height, img_width), dtype=torch.uint8)
+        for i, box in enumerate(boxes):
+            x1, y1, x2, y2 = map(int, box)
+            masks[i, y1:y2, x1:x2] = 1
 
+        
         # Apply transformations
         if self.transform:
             transformed = self.transform(image=image, bboxes=boxes, labels=labels)
@@ -99,6 +107,7 @@ class SafetyGearDataset(Dataset):
             'area': torch.as_tensor((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]), dtype=torch.float32),
             'iscrowd': torch.zeros((len(boxes),), dtype=torch.int64)
         }
+        target["masks"] = masks
 
         return image, target
 
@@ -200,3 +209,78 @@ def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4,s
         )
     
     return train_loader, valid_loader, test_loader
+"""
+YOLO-specific dataset implementation for the Safety Gear Detection System.
+"""
+
+import os
+import cv2
+import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader
+
+class YOLODataset(Dataset):
+    """Dataset class for YOLO-based safety gear detection"""
+
+    def __init__(self, img_dir, label_dir, img_size=640, transform=None, class_map=None):
+        """
+        Initialize the dataset
+
+        Args:
+            img_dir (str): Directory containing images
+            label_dir (str): Directory containing labels
+            img_size (int): Image size for YOLO inference
+            transform: Additional transforms to apply (beyond resizing)
+            class_map (dict): Mapping from class IDs to class names
+        """
+        self.img_dir = img_dir
+        self.label_dir = label_dir
+        self.transform = transform
+        self.img_size = img_size
+
+        # Get all image files
+        self.img_files = sorted([os.path.join(img_dir, f) for f in os.listdir(img_dir)
+                                if f.endswith(('.jpg', '.jpeg', '.png'))])
+
+        # Class mapping
+        self.class_map = class_map if class_map else {}
+
+    def __len__(self):
+        return len(self.img_files)
+
+    def __getitem__(self, idx):
+        # Get image and label paths
+        img_path = self.img_files[idx]
+        img_name = os.path.basename(img_path).rsplit('.', 1)[0]
+        label_path = os.path.join(self.label_dir, f"{img_name}.txt")
+        
+        # For Ultralytics, we can simply return the paths
+        # This is the most efficient way to use YOLO with Ultralytics
+        return img_path, label_path
+    
+    # Add this to your dataset.py or create a new file
+
+def create_yolo_data_loaders(train_dir, valid_dir, test_dir, batch_size=4, img_size=640):
+    """Create YOLO-specific data loaders for training, validation, and testing."""
+    # Create data.yaml file for YOLO training with ABSOLUTE paths
+    data_yaml = {
+        'train': os.path.abspath(os.path.join(train_dir, 'images')),
+        'val': os.path.abspath(os.path.join(valid_dir, 'images')),
+        'test': os.path.abspath(os.path.join(test_dir, 'images')),
+        'nc': len(CFG.CLASS_NAMES),
+        'names': CFG.CLASS_NAMES
+    }
+    
+    # Print the paths to verify they're correct
+    print(f"YOLO Dataset Paths:")
+    print(f"  Train: {data_yaml['train']}")
+    print(f"  Val: {data_yaml['val']}")
+    print(f"  Test: {data_yaml['test']}")
+    
+    # Save data.yaml in current directory
+    with open('data.yaml', 'w') as f:
+        yaml.dump(data_yaml, f)
+    
+    # For YOLO models, we don't actually need to create DataLoader objects
+    # The YOLO framework handles data loading internally
+    return None, None, None

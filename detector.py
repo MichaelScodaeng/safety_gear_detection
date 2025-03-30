@@ -10,10 +10,14 @@ from PIL import Image
 import json
 from config import CFG
 from models.faster_rcnn import FasterRCNN_Model
+from models.mask_rcnn import MaskRCNN_Model
+from models.fast_rcnn import FastRCNN_Model
+from models.rcnn import RCNN
+from utils.visualization import visualize_yolo_results
 from utils.visualization import visualize_prediction, visualize_debug_images
 from utils.evaluation import calculate_coco_map, validate
 from utils.training import train_model
-
+import glob
 
 class SafetyGearDetector:
     """
@@ -41,11 +45,44 @@ class SafetyGearDetector:
 
     def _initialize_model(self):
         """Initialize the model based on model type"""
-        self.model = FasterRCNN_Model(
-            num_classes=self.num_classes + 1,  # +1 for background
-            device=self.device,
-            config=self.config  # config already contains model_type
-        )
+        if 'maskrcnn' in self.model_type.lower():
+            # For MaskRCNN models
+            
+            self.model = MaskRCNN_Model(
+                num_classes=self.num_classes,  # Don't add +1, the model handles it
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
+        elif "fasterrcnn" in self.model_type.lower():
+            # For FasterRCNN models (your existing code)
+            self.model = FasterRCNN_Model(
+                num_classes=self.num_classes,  # +1 for background
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
+        elif "fast_rcnn" in self.model_type.lower():
+            # For FastRCNN models (your existing code)
+            self.model = FastRCNN_Model(
+                num_classes=self.num_classes,  # +1 for background
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
+        elif "rcnn" in self.model_type.lower():
+            # For RCNN models (your existing code)
+            self.model = RCNN(
+                num_classes=self.num_classes,  # +1 for background
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
+        elif self.model_type.lower().startswith(('yolov', 'yolo')):
+            # For YOLO models (your existing code)
+            from models.yolo import UltralyticsYOLO
+            self.model = UltralyticsYOLO(
+                num_classes=self.num_classes,
+                model_type=self.model_type,
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
 
     def predict(self, image, confidence_threshold=0.5, nms_threshold=0.3):
         """
@@ -64,41 +101,61 @@ class SafetyGearDetector:
 
         # Process image input (could be path, numpy array, or PIL image)
         processed_image = self._process_image_input(image)
-        
-        # Run inference
-        self.model.model.eval()
-        with torch.no_grad():
-            # Convert image to tensor and move to device
-            if isinstance(processed_image, list):
-                # Handle batch of images
-                image_tensors = [torch.tensor(img, dtype=torch.float32).permute(2, 0, 1).to(self.device) for img in processed_image]
-                predictions = self.model.model(image_tensors)
-                
-                # Process each prediction
-                results = []
-                for pred in predictions:
-                    # Get predictions above threshold
-                    mask = pred['scores'] > confidence_threshold
-                    boxes = pred['boxes'][mask].cpu().numpy()
-                    labels = pred['labels'][mask].cpu().numpy()
-                    scores = pred['scores'][mask].cpu().numpy()
+        if self.model_type.lower().startswith(('yolov', 'yolo')):
+            # YOLO models handle inference differently
+            results = self.model.predict(
+                image,
+                conf=confidence_threshold,
+                iou=nms_threshold
+            )
+            
+            # Process the results from YOLO format to our standard format
+            boxes = []
+            labels = []
+            scores = []
+            
+            # Handle result (which is an Ultralytics Results object)
+            for r in results:
+                boxes.extend(r.boxes.xyxy.cpu().numpy())  # convert boxes to xyxy format
+                labels.extend(r.boxes.cls.cpu().numpy().astype(int))
+                scores.extend(r.boxes.conf.cpu().numpy())
+            
+            return np.array(boxes), np.array(labels), np.array(scores), self.config.get('CLASS_NAMES', [])
+        else:
+            # Run inference
+            self.model.model.eval()
+            with torch.no_grad():
+                # Convert image to tensor and move to device
+                if isinstance(processed_image, list):
+                    # Handle batch of images
+                    image_tensors = [torch.tensor(img, dtype=torch.float32).permute(2, 0, 1).to(self.device) for img in processed_image]
+                    predictions = self.model.model(image_tensors)
                     
-                    # Add to results
-                    results.append((boxes, labels, scores, self.config.get('CLASS_NAMES', [])))
-                
-                return results
-            else:
-                # Handle single image
-                image_tensor = torch.tensor(processed_image, dtype=torch.float32).permute(2, 0, 1).to(self.device)
-                predictions = self.model.model([image_tensor])[0]
-                
-                # Get predictions above threshold
-                mask = predictions['scores'] > confidence_threshold
-                boxes = predictions['boxes'][mask].cpu().numpy()
-                labels = predictions['labels'][mask].cpu().numpy()
-                scores = predictions['scores'][mask].cpu().numpy()
-                
-                return boxes, labels, scores, self.config.get('CLASS_NAMES', [])
+                    # Process each prediction
+                    results = []
+                    for pred in predictions:
+                        # Get predictions above threshold
+                        mask = pred['scores'] > confidence_threshold
+                        boxes = pred['boxes'][mask].cpu().numpy()
+                        labels = pred['labels'][mask].cpu().numpy()
+                        scores = pred['scores'][mask].cpu().numpy()
+                        
+                        # Add to results
+                        results.append((boxes, labels, scores, self.config.get('CLASS_NAMES', [])))
+                    
+                    return results
+                else:
+                    # Handle single image
+                    image_tensor = torch.tensor(processed_image, dtype=torch.float32).permute(2, 0, 1).to(self.device)
+                    predictions = self.model.model([image_tensor])[0]
+                    
+                    # Get predictions above threshold
+                    mask = predictions['scores'] > confidence_threshold
+                    boxes = predictions['boxes'][mask].cpu().numpy()
+                    labels = predictions['labels'][mask].cpu().numpy()
+                    scores = predictions['scores'][mask].cpu().numpy()
+                    
+                    return boxes, labels, scores, self.config.get('CLASS_NAMES', [])
 
     def _process_image_input(self, image):
         """
@@ -239,8 +296,96 @@ class SafetyGearDetector:
               lr=0.001, weight_decay=0.0005, batch_size=4, 
               fine_tune=False, freeze_backbone=True, unfreeze_layers=None,
               gradient_accumulation_steps=1):
-        """Train the model (delegate to utils.training)"""
-        return train_model(self, train_loader, valid_loader, epochs, 
-                         lr, weight_decay, batch_size, 
-                         fine_tune, freeze_backbone, unfreeze_layers,
-                         gradient_accumulation_steps)
+         # For Fast R-CNN and R-CNN, use their custom training methods
+        if self.model_type.lower() in ['fast_rcnn', 'rcnn']:
+            print(f"Using custom training method for {self.model_type}")
+            
+            # Get datasets from the loaders
+            train_dataset = train_loader.dataset
+            valid_dataset = valid_loader.dataset if valid_loader else None
+            
+            # Use the model's own train method with the appropriate parameters
+            return self.model.train(
+                train_dataset=train_dataset,
+                valid_dataset=valid_dataset,
+                epochs=epochs,
+                lr=lr,
+                weight_decay=weight_decay,
+                batch_size=batch_size,
+                pos_iou_threshold=0.5,  # Default values, you might want to make these configurable
+                neg_iou_threshold=0.3,
+                proposals_per_image=128,
+                max_proposals=300
+            )
+        # For YOLO models, training process is different
+        elif self.model_type.startswith(('yolov4', 'yolov8', 'yolov12')):
+            print(f"Training {self.model_type} with Ultralytics...")
+            # Update config with training parameters
+            yolo_params = {
+                'data': 'data.yaml',  # Path to data.yaml file
+                'epochs': epochs,
+                'batch': batch_size,
+                'imgsz': 640,  # Image size
+                'device': self.device,
+                'project': 'safety_gear_detection',
+                'name': self.model_type,
+                'lr0': lr,
+                'weight_decay': weight_decay
+            }
+            
+            # Train with Ultralytics
+            results = self.model.train(**yolo_params)
+            import glob
+            val_images = glob.glob('./css-data/val/images/*.jpg')
+            
+            # Create output directory if it doesn't exist
+            output_dir = f'./output/{self.model_type}_jpeg'
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Run predictions on a few random samples
+            n_samples = min(10, len(val_images))
+            sample_images = np.random.choice(val_images, n_samples, replace=False)
+            
+            print("Running predictions on validation samples...")
+            
+            for img_path in sample_images:
+                # Get the filename without path
+                base_name = os.path.basename(img_path)
+                
+                # Use the Ultralytics model directly
+                # This uses the native Ultralytics API
+                self.model.model(
+                    source=img_path, 
+                    save=True,
+                    project=output_dir,
+                    name="",
+                    exist_ok=True
+                )
+            
+            print(f"Training completed. Sample predictions saved to {output_dir}")
+            
+            # Show some sample predictions
+            prediction_images = glob.glob(f'{output_dir}/*.jpg')
+            if prediction_images:
+                n = min(5, len(prediction_images))
+                
+                from PIL import Image
+                import matplotlib.pyplot as plt
+                
+                for i in range(n):
+                    image = Image.open(prediction_images[i])
+                    plt.figure(figsize=(10, 10))
+                    plt.imshow(image)
+                    plt.axis('off')
+                    plt.title(f"Prediction {i+1}")
+                    plt.show()
+            else:
+                print("No prediction images were found to display")
+            
+            return results
+        else:
+            # For Faster R-CNN and other models, use the common training infrastructure
+            return train_model(self, train_loader, valid_loader, epochs, 
+                            lr, weight_decay, batch_size, 
+                            fine_tune, freeze_backbone, unfreeze_layers,
+                            gradient_accumulation_steps)
