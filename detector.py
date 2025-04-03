@@ -74,6 +74,22 @@ class SafetyGearDetector:
                 device=self.device,
                 config=self.config  # config already contains model_type
             )
+        elif self.model_type.lower().startswith('rtdetr'):
+            # For RT-DETR models
+            from models.rt_detr import RTDETR_Model
+            self.model = RTDETR_Model(
+                num_classes=self.num_classes,
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
+        elif self.model_type.lower().startswith('detr'):
+            # For DETR models
+            from models.detr import DETR_Model
+            self.model = DETR_Model(
+                num_classes=self.num_classes,
+                device=self.device,
+                config=self.config  # config already contains model_type
+            )
         elif self.model_type.lower().startswith(('yolov', 'yolo')):
             # For YOLO models (your existing code)
             from models.yolo import UltralyticsYOLO
@@ -317,11 +333,11 @@ class SafetyGearDetector:
                 proposals_per_image=128,
                 max_proposals=300
             )
-        # For YOLO models, training process is different
-        elif self.model_type.startswith(('yolov4', 'yolov8', 'yolov12')):
+        # For YOLO and RT-DETR models, training process is different
+        elif self.model_type.startswith(('yolov4', 'yolov8', 'yolov12', 'rtdetr')):
             print(f"Training {self.model_type} with Ultralytics...")
             # Update config with training parameters
-            yolo_params = {
+            training_params = {
                 'data': 'data.yaml',  # Path to data.yaml file
                 'epochs': epochs,
                 'batch': batch_size,
@@ -334,7 +350,7 @@ class SafetyGearDetector:
             }
             
             # Train with Ultralytics
-            results = self.model.train(**yolo_params)
+            results = self.model.train(**training_params)
             import glob
             val_images = glob.glob('./css-data/val/images/*.jpg')
             

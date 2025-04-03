@@ -19,14 +19,18 @@ def parse_args():
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'evaluate', 'predict'],
                         help='Operation mode (train, evaluate, predict)')
     parser.add_argument('--model_type', type=str, default='fasterrcnn_resnet50_fpn_v2',
-             choices=['custom', 'rcnn', 'fast_rcnn',
-                     'fasterrcnn_resnet50_fpn', 'fasterrcnn_resnet50_fpn_v2', 
-                     'fasterrcnn_mobilenet_v3_large_fpn', 'fasterrcnn_mobilenet_v3_large_320_fpn',
-                     'maskrcnn_resnet50_fpn', 'maskrcnn_resnet50_fpn_v2',
-                     'yolov4n', 'yolov4s', 'yolov4m', 'yolov4l', 'yolov4x',
-                     'yolov8n', 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x',
-                     'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x',
-                     'yolo12n', 'yolo12s', 'yolo12m', 'yolo12l', 'yolo12x'],
+                choices=['custom', 'rcnn', 'fast_rcnn',
+                        'fasterrcnn_resnet50_fpn', 'fasterrcnn_resnet50_fpn_v2', 
+                        'fasterrcnn_mobilenet_v3_large_fpn', 'fasterrcnn_mobilenet_v3_large_320_fpn',
+                        'maskrcnn_resnet50_fpn', 'maskrcnn_resnet50_fpn_v2',
+                        'yolov4n', 'yolov4s', 'yolov4m', 'yolov4l', 'yolov4x',
+                        'yolov8n', 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x',
+                        'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x',
+                        'yolo12n', 'yolo12s', 'yolo12m', 'yolo12l', 'yolo12x',
+                        'rtdetr-l', 'rtdetr-x',
+                        # Add DETR model options:
+                        'detr', 'detr-resnet-50', 'detr-resnet-101', 
+                        'detr-r50-dc5', 'detr-r101-dc5'],
              help='Model architecture to use')
     parser.add_argument('--data_path', type=str, default=CFG.CSS_DATA_PATH,
                         help='Path to the dataset directory')
@@ -173,6 +177,29 @@ def train_model(args):
         history = detector.train(
             train_loader,
             valid_loader, 
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=CFG.LEARNING_RATE,
+            weight_decay=CFG.WEIGHT_DECAY
+        )
+        
+        return detector
+    elif args.model_type.startswith('detr'):
+        # For DETR models
+        from data.dataset import create_detr_data_loaders
+    
+        train_loader, valid_loader, test_loader = create_detr_data_loaders(
+            train_dir=os.path.join(args.data_path, 'train'),
+            valid_dir=os.path.join(args.data_path, 'val'),
+            test_dir=os.path.join(args.data_path, 'test'),
+            batch_size=args.batch_size
+        )
+        
+        detector = SafetyGearDetector(model_type=args.model_type)
+        
+        history = detector.train(
+            train_loader,
+            valid_loader,
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=CFG.LEARNING_RATE,

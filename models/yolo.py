@@ -21,8 +21,17 @@ class UltralyticsYOLO:
             # For YOLOv8 models
             self.model = YOLO(f'{model_type}.pt')
         elif model_type.startswith('yolov4'):
-            # For YOLOv4 models
-            self.model = YOLO(f'{model_type}.pt')
+            import os
+            from urllib.request import urlretrieve
+            
+            model_path = f'{model_type}.pt'
+            if not os.path.exists(model_path):
+                print(f"Downloading {model_type} weights...")
+                url = f"https://github.com/ultralytics/yolov4/releases/download/v1.0/{model_type}.pt"
+                urlretrieve(url, model_path)
+                print(f"Downloaded {model_type} weights to {model_path}")
+            
+            self.model = YOLO(model_path)
         elif model_type.startswith('yolo12'):
             # For YOLOv12 models
             self.model = YOLO(f'{model_type}.pt')

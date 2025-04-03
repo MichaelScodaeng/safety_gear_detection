@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from PIL import Image
 
 class SafetyGearDataset(Dataset):
     """Dataset class for safety gear detection"""
@@ -38,76 +39,51 @@ class SafetyGearDataset(Dataset):
     def __len__(self):
         return len(self.img_files)
 
-    def __getitem__(self, idx):
-        img_path = self.img_files[idx]
-        image = cv2.imread(img_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    def _parse_yolo_annotation(self, label_path, image_shape):
+        """
+        Parse YOLOv8 annotation file and convert to absolute pixel values.
 
-        #print(f"Loading image: {img_path}")
-        #print(f"Image shape: {image.shape}")
+        Args:
+            label_path (str): Path to the YOLO annotation file.
+            image_shape (tuple): Shape of the image (height, width).
 
-        # Get label file path
-        img_name = os.path.basename(img_path).rsplit('.', 1)[0]
-        label_path = os.path.join(self.label_dir, f"{img_name}.txt")
-        #print(f"Looking for label file: {label_path}")
-
+        Returns:
+            dict: Parsed annotations with 'boxes' and 'labels'.
+        """
+        h, w = image_shape
         boxes = []
         labels = []
 
         if os.path.exists(label_path):
-            # YOLO format: class_id, x_center, y_center, width, height (normalized)
             with open(label_path, 'r') as f:
                 for line in f.readlines():
-                    data = line.strip().split()
-                    if len(data) == 5:
-                        class_id, x_center, y_center, width, height = map(float, data)
+                    class_id, x_center, y_center, width, height = map(float, line.strip().split())
+                    x_min = (x_center - width / 2) * w
+                    y_min = (y_center - height / 2) * h
+                    x_max = (x_center + width / 2) * w
+                    y_max = (y_center + height / 2) * h
+                    boxes.append([x_min, y_min, x_max, y_max])
+                    labels.append(int(class_id))
 
-                        # Convert normalized YOLO format to pixel coordinates [x1, y1, x2, y2]
-                        img_h, img_w = image.shape[:2]
-                        x1 = (x_center - width/2) * img_w
-                        y1 = (y_center - height/2) * img_h
-                        x2 = (x_center + width/2) * img_w
-                        y2 = (y_center + height/2) * img_h
+        return {"boxes": torch.tensor(boxes, dtype=torch.float32), "labels": torch.tensor(labels, dtype=torch.int64)}
 
-                        # Ensure coordinates are within image boundaries
-                        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(img_w, x2), min(img_h, y2)
+    def __getitem__(self, idx):
+        img_path = self.img_files[idx]
+        label_path = os.path.join(self.label_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}.txt")
 
-                        # Skip invalid boxes
-                        if x2 <= x1 or y2 <= y1:
-                            continue
+        # Load image
+        image = Image.open(img_path).convert("RGB")
+        image_shape = image.size[::-1]  # (height, width)
 
-                        boxes.append([x1, y1, x2, y2])
-                        labels.append(int(class_id))
+        # Parse annotations
+        target = self._parse_yolo_annotation(label_path, image_shape)
 
-        # Convert to numpy arrays
-        boxes = np.array(boxes, dtype=np.float32)
-        labels = np.array(labels, dtype=np.int64)
-        # In your SafetyGearDataset __getitem__ method
-        img_height, img_width = image.shape[:2]
-        masks = torch.zeros((len(boxes), img_height, img_width), dtype=torch.uint8)
-        for i, box in enumerate(boxes):
-            x1, y1, x2, y2 = map(int, box)
-            masks[i, y1:y2, x1:x2] = 1
-
-        
         # Apply transformations
         if self.transform:
-            transformed = self.transform(image=image, bboxes=boxes, labels=labels)
-            image = transformed['image']
-            boxes = np.array(transformed['bboxes'], dtype=np.float32) if len(transformed['bboxes']) > 0 else np.zeros((0, 4), dtype=np.float32)
-            labels = np.array(transformed['labels'], dtype=np.int64) if len(transformed['labels']) > 0 else np.zeros((0,), dtype=np.int64)
-            #print(f"Type of transformed['bboxes']: {type(transformed['bboxes'])}")
-            #print(f"Value of transformed['bboxes']: {transformed['bboxes']}")
-
-        # Create target dictionary for torchvision detection models
-        target = {
-            'boxes': torch.as_tensor(boxes, dtype=torch.float32),
-            'labels': torch.as_tensor(labels + 1, dtype=torch.int64),  # Add 1 because 0 is background in torchvision models
-            'image_id': torch.tensor([idx]),
-            'area': torch.as_tensor((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]), dtype=torch.float32),
-            'iscrowd': torch.zeros((len(boxes),), dtype=torch.int64)
-        }
-        target["masks"] = masks
+            transformed = self.transform(image=np.array(image), bboxes=target["boxes"], labels=target["labels"])
+            image = transformed["image"]
+            target["boxes"] = torch.tensor(transformed["bboxes"], dtype=torch.float32)
+            target["labels"] = torch.tensor(transformed["labels"], dtype=torch.int64)
 
         return image, target
 
@@ -135,6 +111,16 @@ def get_transforms(train=False):
         ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
 def collate_fn(batch):
         return tuple(zip(*batch))
+
+def collate_fn_detr(batch):
+    """
+    Custom collate function for DETR models that stacks images into a tensor batch
+    and keeps targets as a list.
+    """
+    images = torch.stack([item[0] for item in batch])
+    targets = [item[1] for item in batch]
+    return images, targets
+
 def create_data_loaders(train_dir, valid_dir=None, test_dir=None, batch_size=4,shuffle = True):
     """
     Create data loaders for training, validation and testing
@@ -284,3 +270,113 @@ def create_yolo_data_loaders(train_dir, valid_dir, test_dir, batch_size=4, img_s
     # For YOLO models, we don't actually need to create DataLoader objects
     # The YOLO framework handles data loading internally
     return None, None, None
+
+class DETRDataset(SafetyGearDataset):
+    """Dataset class specifically for DETR models"""
+    
+    def __getitem__(self, idx):
+        """Get an item from the dataset, converting tensors to numpy arrays for albumentations"""
+        try:
+            image, target = super().__getitem__(idx)
+            
+            # Convert tensor labels to numpy arrays for albumentations compatibility
+            if isinstance(target['labels'], torch.Tensor):
+                target['labels'] = target['labels'].numpy()
+            
+            # Convert tensor boxes to numpy arrays if needed
+            if isinstance(target['boxes'], torch.Tensor):
+                target['boxes'] = target['boxes'].numpy()
+                
+            return image, target
+        except Exception as e:
+            print(f"Error in DETRDataset.__getitem__ for index {idx}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+
+def create_detr_data_loaders(train_dir, valid_dir, test_dir, batch_size=4, shuffle=True):
+    """Create data loaders specifically for DETR models"""
+    
+    # Use the specialized DETR dataset class
+    train_dataset = DETRDataset(train_dir, get_transforms(train=True)) if train_dir and os.path.exists(train_dir) else None
+    valid_dataset = DETRDataset(valid_dir, get_transforms(train=False)) if valid_dir and os.path.exists(valid_dir) else None
+    test_dataset = DETRDataset(test_dir, get_transforms(train=False)) if test_dir and os.path.exists(test_dir) else None
+    
+    # Use the standard collate function since we're still using the base dataset format
+    collate_fn = lambda batch: tuple(zip(*batch))
+    
+    # Create data loaders
+    # Use DETRDataset if it exists, otherwise fallback to SafetyGearDataset with special handling
+    try:
+        print("Attempting to use DETRDataset...")
+        train_dataset = DETRDataset(train_dir, get_transforms(train=True)) if train_dir and os.path.exists(train_dir) else None
+        valid_dataset = DETRDataset(valid_dir, get_transforms(train=False)) if valid_dir and os.path.exists(valid_dir) else None
+        test_dataset = DETRDataset(test_dir, get_transforms(train=False)) if test_dir and os.path.exists(test_dir) else None
+    except NameError:
+        print("DETRDataset not found, falling back to SafetyGearDataset...")
+        # If DETRDataset is not defined, use SafetyGearDataset with special collate function
+        train_dataset = SafetyGearDataset(train_dir, get_transforms(train=True)) if train_dir and os.path.exists(train_dir) else None
+        valid_dataset = SafetyGearDataset(valid_dir, get_transforms(train=False)) if valid_dir and os.path.exists(valid_dir) else None
+        test_dataset = SafetyGearDataset(test_dir, get_transforms(train=False)) if test_dir and os.path.exists(test_dir) else None
+    
+    # Debug dataset sizes
+    print(f"- Train dataset size: {len(train_dataset) if train_dataset else 0}")
+    print(f"- Valid dataset size: {len(valid_dataset) if valid_dataset else 0}")
+    print(f"- Test dataset size: {len(test_dataset) if test_dataset else 0}")
+    
+    # Custom collate function for DETR
+    def collate_fn_detr(batch):
+        try:
+            # Process labels to convert tensors to lists/numpy to avoid albumentations issues
+            processed_batch = []
+            for img, target in batch:
+                if isinstance(target.get('labels'), torch.Tensor):
+                    target['labels'] = target['labels'].tolist()  # Convert to list to avoid tensor issues
+                if isinstance(target.get('boxes'), torch.Tensor):
+                    target['boxes'] = target['boxes'].numpy().tolist()  # Convert to list to avoid tensor issues
+                processed_batch.append((img, target))
+            
+            # Standard collate function
+            return tuple(zip(*processed_batch))
+        except Exception as e:
+            print(f"Error in collate_fn_detr: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    # Create data loaders with error handling
+    try:
+        print("Creating train loader...")
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=batch_size, 
+            shuffle=shuffle, 
+            collate_fn=collate_fn_detr,
+            num_workers=0
+        ) if train_dataset else None
+        
+        print("Creating validation loader...")
+        valid_loader = DataLoader(
+            valid_dataset, 
+            batch_size=batch_size, 
+            shuffle=False, 
+            collate_fn=collate_fn_detr,
+            num_workers=0
+        ) if valid_dataset else None
+        
+        print("Creating test loader...")
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=batch_size, 
+            shuffle=False, 
+            collate_fn=collate_fn_detr,
+            num_workers=0
+        ) if test_dataset else None
+    except Exception as e:
+        print(f"Error creating data loaders: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    
+    return train_loader, valid_loader, test_loader

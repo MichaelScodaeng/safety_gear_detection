@@ -110,7 +110,38 @@ def print_model_info(detector, training_args=None):
     print(detector.model.model)
     for name, param in detector.model.model.named_parameters():
         print(f"Layer: {name}, requires_grad: {param.requires_grad}")
-
+def validate_labels(detector, train_loader):
+    """
+    Validate that all labels in the dataset are defined in the CLASS_NAMES configuration.
+    
+    Args:
+        detector: SafetyGearDetector instance
+        train_loader: DataLoader for training data
+    """
+    class_names = detector.config.get('CLASS_NAMES', [])
+    if not class_names:
+        raise ValueError("CLASS_NAMES configuration is empty or not defined.")
+    
+    valid_labels = set(range(len(class_names)))
+    print(f"Valid labels: {valid_labels}")
+    
+    # For DETR models, skip detailed validation as it's handled by the DETR processor
+    if detector.model_type.startswith('detr'):
+        print("DETR model detected - skipping detailed dataset validation")
+        return
+    
+    for batch in train_loader:
+        _, targets = batch
+        for target in targets:
+            # Convert tensor to list if necessary
+            if isinstance(target['labels'], torch.Tensor):
+                labels = target['labels'].tolist()
+            else:
+                labels = target['labels']
+                
+            for label in labels:
+                if label not in valid_labels:
+                    raise ValueError(f"Undefined label {label} found in dataset. ")
 
 def train_model(detector, train_loader, valid_loader=None, epochs=10, 
                 lr=0.001, weight_decay=0.0005, batch_size=4, 
@@ -221,65 +252,78 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
         accumulated_steps = 0
         
         # Training loop
-        for images, targets in progress_bar:
+        if detector.model_type.startswith('detr'):
+            # DETR requires tensors, not lists of images
+           for batch in progress_bar:
+            images, targets = batch  # Unpack the tuple
             accumulated_steps += 1
             
-            '''#Test
-            if accumulated_steps == 20:
-                break'''
-            
             try:
-                # Move to device
-                images = [img.to(detector.device) for img in images]
-                targets = [{k: v.to(detector.device) for k, v in t.items()} for t in targets]
+                # Move images to device and stack them if they're individual tensors
+                if isinstance(images, list):
+                    # Process list of images
+                    pixel_values = torch.stack([img.to(detector.device) for img in images])
+                else:
+                    # Already stacked tensor
+                    pixel_values = images.to(detector.device)
                 
-                # Zero gradients for first step or after update
+                # Format targets for DETR
+                detr_targets = []
+                for idx, target in enumerate(targets):
+                    # Ensure labels are tensors
+                    if not isinstance(target['labels'], torch.Tensor):
+                        labels = torch.tensor(target['labels'], device=detector.device)
+                    else:
+                        labels = target['labels'].to(detector.device)
+                    
+                    # Ensure boxes are tensors
+                    if not isinstance(target['boxes'], torch.Tensor):
+                        boxes = torch.tensor(target['boxes'], device=detector.device)
+                    else:
+                        boxes = target['boxes'].to(detector.device)
+                    
+                    # Create DETR format target
+                    detr_target = {
+                        'labels': labels,
+                        'boxes': boxes,
+                        'image_id': torch.tensor([idx], device=detector.device)
+                    }
+                    
+                    # Calculate area if not present
+                    if 'area' not in target:
+                        area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+                        detr_target['area'] = area
+                    else:
+                        area_tensor = target['area'].to(detector.device) if isinstance(target['area'], torch.Tensor) else torch.tensor(target['area'], device=detector.device)
+                        detr_target['area'] = area_tensor
+                    
+                    detr_targets.append(detr_target)
+                
+                # Zero gradients
                 if accumulated_steps == 1 or accumulated_steps % gradient_accumulation_steps == 0:
                     optimizer.zero_grad()
                 
-                # Forward pass with automatic mixed precision
+                # Forward pass for DETR
+                outputs = detector.model.model(pixel_values=pixel_values, labels=detr_targets)
+                losses = outputs.loss
+                loss_dict = outputs.loss_dict
+                
+                # Scale loss for gradient accumulation
+                scaled_loss = losses / gradient_accumulation_steps
+                
+                # Backward pass
                 if use_amp:
-                    with autocast():
-                        loss_dict = detector.model.model(images, targets)
-                        losses = sum(loss for loss in loss_dict.values())
-                        
-                        # Scale loss based on accumulation steps
-                        scaled_loss = losses / gradient_accumulation_steps
-                    
-                    # Backward pass with gradient scaling
                     scaler.scale(scaled_loss).backward()
-                    
-                    # Update if reached accumulation steps
                     if accumulated_steps % gradient_accumulation_steps == 0:
                         scaler.step(optimizer)
                         scaler.update()
                 else:
-                    # Standard forward pass
-                    loss_dict = detector.model.model(images, targets)
-                    losses = sum(loss for loss in loss_dict.values())
-                    
-                    # Scale loss based on accumulation steps
-                    scaled_loss = losses / gradient_accumulation_steps
-                    
-                    # Backward pass
                     scaled_loss.backward()
-                    
-                    # Update if reached accumulation steps
                     if accumulated_steps % gradient_accumulation_steps == 0:
                         optimizer.step()
                 
                 # Update metrics
                 epoch_loss += losses.item()
-                
-                # Update component losses
-                if 'loss_classifier' in loss_dict:
-                    epoch_loss_classifier += loss_dict['loss_classifier'].item()
-                if 'loss_box_reg' in loss_dict:
-                    epoch_loss_box_reg += loss_dict['loss_box_reg'].item()
-                if 'loss_objectness' in loss_dict:
-                    epoch_loss_objectness += loss_dict['loss_objectness'].item()
-                if 'loss_rpn_box_reg' in loss_dict:
-                    epoch_loss_rpn_box_reg += loss_dict['loss_rpn_box_reg'].item()
                 
                 # Update progress bar
                 progress_bar.set_postfix(loss=losses.item())
@@ -287,10 +331,9 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
             except Exception as e:
                 print(f"Error in batch: {e}")
                 traceback.print_exc()
-                # Skip problematic batch and continue
                 optimizer.zero_grad()
                 continue
-        
+            
         # Handle any remaining gradients
         if accumulated_steps % gradient_accumulation_steps != 0:
             if use_amp:

@@ -3,10 +3,12 @@
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 # Deep Learning
-numpy>=1.20.0
-matplotlib>=3.4.0
-pillow>=8.2.0
-opencv-python>=4.5.3
+torch>=1.12.0
+torchvision>=0.13.0
+numpy>=1.19.0
+matplotlib>=3.5.0
+Pillow>=8.0.0
+opencv-python>=4.5.0
 torchmetrics>=0.9.0
 pycocotools>=2.0.2  # Already included, but highlighting it as you mentioned
 
@@ -17,7 +19,7 @@ pandas>=1.3.0
 seaborn>=0.11.0
 
 # Utilities
-tqdm>=4.62.0
+tqdm>=4.50.0
 pyyaml>=5.4.0
 
 # Standard library packages - no need to install these
@@ -32,3 +34,9 @@ pyyaml>=5.4.0
 # Optional: Development Tools
 #jupyter>=1.0.0
 #ipywidgets>=7.6.5
+
+ultralytics>=8.0.0
+
+# Hugging Face requirements for DETR
+transformers>=4.30.0
+timm>=0.6.12
