@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from config import CFG
 from data.dataset import SafetyGearDataset, get_transforms, create_data_loaders, create_yolo_data_loaders, YOLODataset
+from data.dataset import create_detr_data_loaders
 from detector import SafetyGearDetector
 
 
@@ -29,8 +30,8 @@ def parse_args():
                         'yolo12n', 'yolo12s', 'yolo12m', 'yolo12l', 'yolo12x',
                         'rtdetr-l', 'rtdetr-x',
                         # Add DETR model options:
-                        'detr', 'detr-resnet-50', 'detr-resnet-101', 
-                        'detr-r50-dc5', 'detr-r101-dc5'],
+                        'detr', 'facebook/detr-resnet-50', 'facebook/detr-resnet-101', 
+                        'facebook/detr-resnet-101-dc5', 'facebook/detr-resnet-50-dc5'],
              help='Model architecture to use')
     parser.add_argument('--data_path', type=str, default=CFG.CSS_DATA_PATH,
                         help='Path to the dataset directory')
@@ -149,11 +150,18 @@ def train_model(args):
     """Train a new model or fine-tune an existing one."""
     print(f"Training {args.model_type} model...")
     print("Torch Available: ", torch.cuda.is_available())
-    
-    # Create data loaders
-    train_dir = os.path.join(args.data_path, 'train')
-    valid_dir = os.path.join(args.data_path, 'val')
-    test_dir = os.path.join(args.data_path, 'test')
+    if 'detr' in args.model_type.lower():
+        args.data_path = os.path.abspath(os.path.join(args.data_path, '..', "detr-data"))
+        print("Using DETR model. Ensure you have the correct dataset format.")
+        print("Data Path: ", args.data_path)
+        train_dir = os.path.abspath(os.path.join(args.data_path, "train"))
+        valid_dir = os.path.abspath(os.path.join(args.data_path, "valid"))
+        test_dir = os.path.abspath(os.path.join(args.data_path, "test"))
+    else:
+# Create data loaders
+        train_dir = os.path.join(args.data_path, 'train')
+        valid_dir = os.path.join(args.data_path, 'val')
+        test_dir = os.path.join(args.data_path, 'test')
 
     print("Training Path: ", train_dir)
     print("Validation Path: ", valid_dir)
@@ -184,16 +192,25 @@ def train_model(args):
         )
         
         return detector
-    elif args.model_type.startswith('detr'):
-        # For DETR models
-        from data.dataset import create_detr_data_loaders
-    
+    elif "detr" in args.model_type:
+        detr_data_path = args.data_path
+        print(f"Found DETR data path: {detr_data_path}")
+        
+        from huggingface_hub import notebook_login
+
+        notebook_login()
+        
         train_loader, valid_loader, test_loader = create_detr_data_loaders(
-            train_dir=os.path.join(args.data_path, 'train'),
-            valid_dir=os.path.join(args.data_path, 'val'),
-            test_dir=os.path.join(args.data_path, 'test'),
+            data_dir=detr_data_path,
+            train_dir=train_dir,
+            valid_dir=valid_dir,
+            test_dir=test_dir,
             batch_size=args.batch_size
         )
+        
+        # Check if train_loader was created successfully
+        if train_loader is None:
+            raise ValueError("Failed to create train_loader. Please check your dataset.")
         
         detector = SafetyGearDetector(model_type=args.model_type)
         

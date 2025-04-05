@@ -82,7 +82,7 @@ class SafetyGearDetector:
                 device=self.device,
                 config=self.config  # config already contains model_type
             )
-        elif self.model_type.lower().startswith('detr'):
+        elif 'detr' in self.model_type.lower():
             # For DETR models
             from models.detr import DETR_Model
             self.model = DETR_Model(
@@ -399,6 +399,26 @@ class SafetyGearDetector:
                 print("No prediction images were found to display")
             
             return results
+        # For DETR models, use their own training method
+        elif "detr" in self.model_type.lower():
+            print(f"Training {self.model_type} with custom DETR training...")
+            # Update config with training parameters
+            training_params = {
+                'epochs': epochs,
+                'lr': lr,
+                'weight_decay': weight_decay
+            }
+            
+            # Train with DETR's own train method
+            history = self.model.train(
+                train_loader=train_loader,
+                valid_loader=valid_loader,
+                epochs=epochs,
+                lr=lr,
+                weight_decay=weight_decay
+            )
+            
+            return history
         else:
             # For Faster R-CNN and other models, use the common training infrastructure
             return train_model(self, train_loader, valid_loader, epochs, 
