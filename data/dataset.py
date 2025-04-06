@@ -656,3 +656,6 @@ def detr_collate_fn(batch):
     images = torch.stack(images)
     
     return images, targets
+
+if __name__ == "__main__":
+    main()
