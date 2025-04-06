@@ -657,5 +657,3 @@ def detr_collate_fn(batch):
     
     return images, targets
 
-if __name__ == "__main__":
-    main()
