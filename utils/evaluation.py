@@ -478,7 +478,7 @@ def validate(detector, data_loader):
                 
             # Visualize some examples
             print("\nVisualizing validation examples:")
-            detector.visualize_debug_images(images, targets, outputs, max_images=2)
+            #detector.visualize_debug_images(images, targets, outputs, max_images=2)
             
             # Print shapes for debugging
             for i, (img, output, target) in enumerate(zip(images[:2], outputs[:2], targets[:2])):
