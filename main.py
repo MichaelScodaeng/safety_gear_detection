@@ -20,11 +20,11 @@ def parse_args():
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'evaluate', 'predict'],
                         help='Operation mode (train, evaluate, predict)')
     parser.add_argument('--model_type', type=str, default='fasterrcnn_resnet50_fpn_v2',
-                choices=['custom', 'rcnn', 'fast_rcnn',
+                choices=[#'custom', 'rcnn', 'fast_rcnn',
                         'fasterrcnn_resnet50_fpn', 'fasterrcnn_resnet50_fpn_v2', 
                         'fasterrcnn_mobilenet_v3_large_fpn', 'fasterrcnn_mobilenet_v3_large_320_fpn',
                         'maskrcnn_resnet50_fpn', 'maskrcnn_resnet50_fpn_v2',
-                        'yolov4n', 'yolov4s', 'yolov4m', 'yolov4l', 'yolov4x',
+                        #'yolov4n', 'yolov4s', 'yolov4m', 'yolov4l', 'yolov4x',
                         'yolov8n', 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x',
                         'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x',
                         'yolo12n', 'yolo12s', 'yolo12m', 'yolo12l', 'yolo12x',
@@ -60,6 +60,10 @@ def parse_args():
 def visualize_dataloader_sample(dataloader, class_names):
     """
     Visualize a sample from the dataloader alongside its original version.
+    
+    Args:
+        dataloader: DataLoader containing batches of images and targets
+        class_names: List of class names for visualization
     """
     if dataloader is None:
         print("Dataloader is empty. Cannot visualize samples.")
@@ -67,16 +71,19 @@ def visualize_dataloader_sample(dataloader, class_names):
     
     # Get the dataset first
     dataset = dataloader.dataset
+    
     # Choose a specific index to visualize
     sample_idx = 0
     
-    # Get the original image and label directly from the dataset
+    # Get the original image path
     img_path = dataset.img_files[sample_idx]
-    original_image = plt.imread(img_path)
     
     # Get annotations from label file
     img_name = os.path.basename(img_path).rsplit('.', 1)[0]
     label_path = os.path.join(dataset.label_dir, f"{img_name}.txt")
+    
+    # Load original image without transforms
+    original_image = plt.imread(img_path)
     
     # Parse the original annotations
     boxes = []
@@ -102,19 +109,26 @@ def visualize_dataloader_sample(dataloader, class_names):
     original_boxes = np.array(boxes)
     original_labels = np.array(labels)
     
-    # Get the transformed version of the SAME image directly from the dataset
-    # This ensures we compare the same image before and after transformation
+    # Get the transformed version of the SAME image using dataset's __getitem__
     transformed_image, transformed_target = dataset[sample_idx]
-    transformed_image = transformed_image.permute(1, 2, 0).numpy()
     
-    # Denormalize the image for better visualization
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    transformed_image = std * transformed_image + mean
-    transformed_image = np.clip(transformed_image, 0, 1)
+    # Convert tensor to numpy for visualization
+    if isinstance(transformed_image, torch.Tensor):
+        transformed_image = transformed_image.permute(1, 2, 0).numpy()
+        
+        # Denormalize the image for better visualization
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        transformed_image = std * transformed_image + mean
+        transformed_image = np.clip(transformed_image, 0, 1)
     
-    transformed_boxes = transformed_target['boxes'].numpy()
-    transformed_labels = transformed_target['labels'].numpy() - 1
+    # Get transformed boxes and labels
+    transformed_boxes = transformed_target['boxes'].numpy() if isinstance(transformed_target['boxes'], torch.Tensor) else np.array(transformed_target['boxes'])
+    transformed_labels = transformed_target['labels'].numpy() if isinstance(transformed_target['labels'], torch.Tensor) else np.array(transformed_target['labels'])
+    
+    # Labels are 0-indexed in original, but 1-indexed in transformed
+    if transformed_labels.max() > len(class_names) - 1:
+        transformed_labels = transformed_labels - 1  # Adjust for 1-indexed labels
     
     # Create figure with two subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
@@ -125,7 +139,7 @@ def visualize_dataloader_sample(dataloader, class_names):
     for box, label in zip(original_boxes, original_labels):
         x1, y1, x2, y2 = box
         ax1.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, 
-                                    edgecolor='red', facecolor='none', linewidth=2))
+                                   edgecolor='red', facecolor='none', linewidth=2))
         if class_names and label < len(class_names):
             ax1.text(x1, y1 - 5, class_names[label], color='red', fontsize=12, 
                     bbox=dict(facecolor='white', alpha=0.5))
@@ -137,7 +151,7 @@ def visualize_dataloader_sample(dataloader, class_names):
     for box, label in zip(transformed_boxes, transformed_labels):
         x1, y1, x2, y2 = box
         ax2.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, 
-                                    edgecolor='red', facecolor='none', linewidth=2))
+                                   edgecolor='red', facecolor='none', linewidth=2))
         if class_names and label < len(class_names):
             ax2.text(x1, y1 - 5, class_names[label], color='red', fontsize=12, 
                     bbox=dict(facecolor='white', alpha=0.5))
@@ -248,6 +262,9 @@ def train_model(args):
             freeze_backbone=args.freeze_backbone,
             unfreeze_layers=args.unfreeze_layers
         )
+    print("Visualize a sample from the dataloader")
+    #Visualize a sample from the dataloader
+    visualize_dataloader_sample(train_loader, CFG.CLASS_NAMES)
     
     # Train the model
     history = detector.train(
@@ -364,95 +381,6 @@ def predict_image(args):
     print(f"Result saved to {output_path}")
     
     return boxes, labels, scores, class_names
-
-
-def visualize_dataloader_sample(dataloader, class_names):
-    """
-    Visualize a sample from the dataloader alongside its original version.
-    
-    Args:
-        dataloader: DataLoader containing batches of images and targets
-        class_names: List of class names for visualization
-    """
-    if dataloader is None:
-        print("Dataloader is empty. Cannot visualize samples.")
-        return
-    
-    # Get a batch of data
-    for images, targets in dataloader:
-        # Get the original image
-        dataset = dataloader.dataset
-        idx = 0  # Use the first image in the dataset
-        
-        # Get original image path
-        img_path = dataset.img_files[idx]  # Use img_files instead of img_dir
-        
-        # Get label file path for annotations
-        img_name = os.path.basename(img_path).rsplit('.', 1)[0]
-        label_path = os.path.join(dataset.label_dir, f"{img_name}.txt")
-        
-        # Load original image without transforms
-        original_image = plt.imread(img_path)
-        
-        # Parse the original annotations
-        boxes = []
-        labels = []
-        
-        if os.path.exists(label_path):
-            with open(label_path, 'r') as f:
-                for line in f.readlines():
-                    data = line.strip().split()
-                    if len(data) == 5:
-                        class_id, x_center, y_center, width, height = map(float, data)
-                        
-                        # Convert normalized YOLO format to pixel coordinates
-                        img_h, img_w = original_image.shape[:2]
-                        x1 = (x_center - width/2) * img_w
-                        y1 = (y_center - height/2) * img_h
-                        x2 = (x_center + width/2) * img_w
-                        y2 = (y_center + height/2) * img_h
-                        
-                        boxes.append([x1, y1, x2, y2])
-                        labels.append(int(class_id))
-        
-        original_boxes = np.array(boxes)
-        original_labels = np.array(labels)
-        
-        # Get the transformed image from the dataloader
-        transformed_image = images[0].permute(1, 2, 0).numpy()  # Convert to HWC format
-        transformed_boxes = targets[0]['boxes'].numpy()
-        transformed_labels = targets[0]['labels'].numpy() - 1  # Subtract 1 to convert back from torchvision format
-        
-        # Create figure with two subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-        
-        # Plot original image
-        ax1.imshow(original_image)
-        ax1.set_title("Original Image")
-        for box, label in zip(original_boxes, original_labels):
-            x1, y1, x2, y2 = box
-            ax1.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, 
-                                        edgecolor='red', facecolor='none', linewidth=2))
-            if class_names and label < len(class_names):
-                ax1.text(x1, y1 - 5, class_names[label], color='red', fontsize=12, 
-                        bbox=dict(facecolor='white', alpha=0.5))
-        ax1.axis('off')
-        
-        # Plot transformed image
-        ax2.imshow(transformed_image)
-        ax2.set_title("Transformed Image (from DataLoader)")
-        for box, label in zip(transformed_boxes, transformed_labels):
-            x1, y1, x2, y2 = box
-            ax2.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, 
-                                        edgecolor='red', facecolor='none', linewidth=2))
-            if class_names and label < len(class_names):
-                ax2.text(x1, y1 - 5, class_names[label], color='red', fontsize=12, 
-                        bbox=dict(facecolor='white', alpha=0.5))
-        ax2.axis('off')
-        
-        plt.tight_layout()
-        plt.show()
-        break  # Visualize only the first batch
 
 
 def main():

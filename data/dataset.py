@@ -83,7 +83,21 @@ class SafetyGearDataset(Dataset):
 
         # Apply transformations
         if self.transform:
-            transformed = self.transform(image=np.array(image), bboxes=target["boxes"], labels=target["labels"])
+            # Convert tensor labels to list of integers
+            if isinstance(target["labels"], torch.Tensor):
+                labels_list = target["labels"].tolist()
+            else:
+                labels_list = target["labels"]
+                
+            # Convert tensor boxes to list if needed
+            if isinstance(target["boxes"], torch.Tensor):
+                boxes_list = target["boxes"].tolist()
+            else:
+                boxes_list = target["boxes"]
+                
+            # Apply transform with native Python types
+            transformed = self.transform(image=np.array(image), bboxes=boxes_list, labels=labels_list)
+            
             image = transformed["image"]
             target["boxes"] = torch.tensor(transformed["bboxes"], dtype=torch.float32)
             target["labels"] = torch.tensor(transformed["labels"], dtype=torch.int64)

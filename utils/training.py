@@ -333,7 +333,74 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
                 traceback.print_exc()
                 optimizer.zero_grad()
                 continue
-            
+        elif detector.model_type.startswith('fasterrcnn'):
+            # Standard training for Faster R-CNN and other models
+            for batch in progress_bar:
+                images, targets = batch
+                accumulated_steps += 1
+                
+                try:
+                    # Convert any non-tensor data to tensors if needed
+                    if not isinstance(images[0], torch.Tensor):
+                        # Convert image list to tensor format if needed
+                        # This depends on your specific implementation
+                        pass
+                    
+                    # Make sure targets are properly formatted
+                    for t in targets:
+                        # Convert labels to native Python integers for albumentations
+                        if isinstance(t['labels'], torch.Tensor):
+                            t['labels'] = t['labels'].tolist()
+                        if isinstance(t['boxes'], torch.Tensor):
+                            t['boxes'] = t['boxes'].tolist()
+                    
+                    # Move to device
+                    images = [img.to(detector.device) for img in images]
+                    targets = [{k: v.to(detector.device) if isinstance(v, torch.Tensor) else torch.tensor(v, device=detector.device) 
+                              for k, v in t.items()} for t in targets]
+                    
+                    # Zero gradients
+                    if accumulated_steps == 1 or accumulated_steps % gradient_accumulation_steps == 0:
+                        optimizer.zero_grad()
+                    
+                    # Forward pass
+                    with autocast() if use_amp else torch.no_grad():
+                        loss_dict = detector.model.model(images, targets)
+                        losses = sum(loss for loss in loss_dict.values())
+                    
+                    # Scale loss for gradient accumulation
+                    scaled_loss = losses / gradient_accumulation_steps
+                    
+                    # Backward pass
+                    if use_amp:
+                        scaler.scale(scaled_loss).backward()
+                        if accumulated_steps % gradient_accumulation_steps == 0:
+                            scaler.step(optimizer)
+                            scaler.update()
+                    else:
+                        scaled_loss.backward()
+                        if accumulated_steps % gradient_accumulation_steps == 0:
+                            optimizer.step()
+                    
+                    # Update metrics
+                    epoch_loss += losses.item()
+                    if 'loss_classifier' in loss_dict:
+                        epoch_loss_classifier += loss_dict['loss_classifier'].item()
+                    if 'loss_box_reg' in loss_dict:
+                        epoch_loss_box_reg += loss_dict['loss_box_reg'].item()
+                    if 'loss_objectness' in loss_dict:
+                        epoch_loss_objectness += loss_dict['loss_objectness'].item()
+                    if 'loss_rpn_box_reg' in loss_dict:
+                        epoch_loss_rpn_box_reg += loss_dict['loss_rpn_box_reg'].item()
+                    
+                    # Update progress bar
+                    progress_bar.set_postfix(loss=losses.item())
+                    
+                except Exception as e:
+                    print(f"Error in batch: {e}")
+                    traceback.print_exc()
+                    optimizer.zero_grad()
+                    continue
         # Handle any remaining gradients
         if accumulated_steps % gradient_accumulation_steps != 0:
             if use_amp:
