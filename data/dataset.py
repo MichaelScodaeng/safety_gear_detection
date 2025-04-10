@@ -33,9 +33,25 @@ class SafetyGearDataset(Dataset):
         self.transform = transform
 
         # Get all image files
-        self.img_files = sorted([os.path.join(img_dir, f) for f in os.listdir(img_dir)
+        all_img_files = sorted([os.path.join(img_dir, f) for f in os.listdir(img_dir)
                                 if f.endswith(('.jpg', '.jpeg', '.png'))])
-
+        
+        # Filter out images with no annotations
+        self.img_files = []
+        for img_path in all_img_files:
+            base_name = os.path.splitext(os.path.basename(img_path))[0]
+            label_path = os.path.join(label_dir, f"{base_name}.txt")
+            
+            # Check if label file exists and is not empty
+            if os.path.exists(label_path) and os.path.getsize(label_path) > 0:
+                # Further verification: read the file and check if it has valid annotations
+                with open(label_path, 'r') as f:
+                    content = f.read().strip()
+                    if content:  # Check if file has non-empty content
+                        self.img_files.append(img_path)
+        
+        print(f"Loaded {len(self.img_files)} images with annotations out of {len(all_img_files)} total images")
+        
         # Class mapping
         self.class_map = class_map if class_map else {}
 
@@ -126,8 +142,28 @@ def get_transforms(train=False):
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2(),
         ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
+
 def collate_fn(batch):
-        return tuple(zip(*batch))
+    """
+    Custom collate function that handles empty annotations safely
+    """
+    # Filter out samples with no valid boxes
+    valid_batch = []
+    for image, target in batch:
+        if len(target["boxes"]) > 0:
+            valid_batch.append((image, target))
+    
+    # If the entire batch is empty, create a small dummy batch
+    if len(valid_batch) == 0:
+        # Use the first sample and add a small dummy box
+        image, target = batch[0]
+        dummy_box = torch.tensor([[0, 0, 1, 1]], dtype=torch.float32)
+        dummy_label = torch.tensor([0], dtype=torch.int64)
+        target["boxes"] = dummy_box
+        target["labels"] = dummy_label
+        valid_batch.append((image, target))
+    
+    return tuple(zip(*valid_batch))
 
 def collate_fn_detr(batch):
     """

@@ -272,7 +272,7 @@ def train_model(args):
         valid_loader, 
         epochs=args.epochs,
         batch_size=args.batch_size,
-        lr=CFG.LEARNING_RATE,
+        lr=1e-5,  # Start with much lower learning rate for fine-tuning
         weight_decay=CFG.WEIGHT_DECAY,
         fine_tune=args.fine_tune,
         freeze_backbone=args.freeze_backbone,

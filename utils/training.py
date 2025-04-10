@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 import traceback
+import contextlib
 
 def print_model_info(detector, training_args=None):
     """
@@ -364,7 +365,7 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
                         optimizer.zero_grad()
                     
                     # Forward pass
-                    with autocast() if use_amp else torch.no_grad():
+                    with torch.cuda.amp.autocast() if use_amp else contextlib.nullcontext():
                         loss_dict = detector.model.model(images, targets)
                         losses = sum(loss for loss in loss_dict.values())
                     
@@ -443,20 +444,25 @@ def train_model(detector, train_loader, valid_loader=None, epochs=10,
             # Update learning rate
             lr_scheduler.step(val_loss)
         
-        # Gradually unfreeze deeper layers as training progresses (uncomment if needed)
-        '''
-        if epoch == int(epochs * 0.3):  # After 30% of epochs
+        # Gradually unfreeze deeper layers as training progresses
+        if epoch == 0:  # First epoch - train only the classifier head
+            for name, param in detector.model.model.named_parameters():
+                if "roi_heads.box_predictor" in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+
+        elif epoch == int(epochs * 0.2):  # After 20% of epochs
             print("Unfreezing layer4 of the backbone")
             for name, param in detector.model.model.named_parameters():
-                if "backbone.layer4" in name:
+                if "backbone.layer4" in name or "roi_heads" in name:
                     param.requires_grad = True
-        
-        elif epoch == int(epochs * 0.6):  # After 60% of epochs
-            print("Unfreezing FPN layers")
+
+        elif epoch == int(epochs * 0.4):  # After 40% of epochs
+            print("Unfreezing layer3 and FPN")
             for name, param in detector.model.model.named_parameters():
-                if "fpn" in name:
+                if "backbone.layer3" in name or "fpn" in name:
                     param.requires_grad = True
-        '''
         
         # Save model checkpoint
         detector.save_model(f"{detector.config.get('OUTPUT_PATH', './')}/model_epoch_{epoch+1}.pt")
