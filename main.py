@@ -12,6 +12,7 @@ from config import CFG
 from data.dataset import SafetyGearDataset, get_transforms, create_data_loaders, create_yolo_data_loaders, YOLODataset
 from data.dataset import create_detr_data_loaders
 from detector import SafetyGearDetector
+import utils
 
 
 def parse_args():
@@ -316,11 +317,9 @@ def evaluate_model(args):
         return
     
     # Evaluate the model
-    metrics = detector.evaluate(test_loader)
-    print(f"mAP: {metrics['mAP']:.4f}")
+    val_loss, val_map = utils.evaluation.validate(detector, test_loader)  # Pass only detector and test_loader
     
-    return metrics
-
+    return val_loss, val_map
 
 def predict_image(args):
     """Run inference on an image."""
